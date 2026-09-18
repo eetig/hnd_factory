@@ -1,0 +1,36 @@
+server:
+  port: 8081 # hnd_factory 服务端口
+
+spring:
+  application:
+    name: hnd_factory # 服务名称，Nacos注册用，Feign里@FeignClient name对应这个
+  # mysql配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/factory_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123eetig
+  # Nacos注册中心
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+
+# MyBatis-plus配置
+mybatis-plus:
+  mapper-locations: classpath:mapper/**/*.xml
+  type-aliases-package: org.example.entity
+  configuration:
+    map-underscore-to-camel-case: true # 下划线自动转驼峰，数据库pick_no映射pickNo
+
+# Sa-Token 基础配置
+sa-token:
+  token-name: satoken      # token 名称，前端请求头携带 satoken: <token>
+  timeout: 86400           # token 有效期（秒），86400 = 24 小时，-1 为永不过期
+  active-timeout: -1       # 活跃超时（秒），-1 表示不开启
+  is-concurrent: true      # 允许同一账号并发登录
+  is-share: true           # 并发登录时共用一个 token
+  token-style: uuid        # token 风格
+  is-log: false            # 是否打印操作日志
+  is-read-cookie: true     # 是否从 Cookie 读取 token
+  is-read-header: true     # 是否从 Header 读取 token

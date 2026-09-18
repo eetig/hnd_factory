@@ -1,0 +1,63 @@
+plugins {
+    id 'org.springframework.boot' version '3.2.0'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'java'
+}
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = '17'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        // Spring Cloud 版本
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:2023.0.0"
+        // Spring Cloud Alibaba 版本管理
+        mavenBom "com.alibaba.cloud:spring-cloud-alibaba-dependencies:2023.0.1.0"
+    }
+}
+
+dependencies {
+    // SpringBoot Web
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // 参数校验
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    // OpenFeign 微服务调用
+    implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
+    // ✅ 新增：SpringCloud LoadBalancer 负载均衡（Feign+nacos服务发现必须）
+    implementation 'org.springframework.cloud:spring-cloud-starter-loadbalancer'
+    // MyBatis Plus SpringBoot3专用
+    implementation 'com.baomidou:mybatis-plus-spring-boot3-starter:3.5.5'
+    // MySQL驱动
+    implementation 'com.mysql:mysql-connector-j'
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // nacos 服务注册发现
+    implementation 'com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-discovery'
+
+    // 单元测试
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+
+    //feign
+    implementation 'org.springframework.cloud:spring-cloud-starter-openfeign:4.1.0'
+
+    implementation 'cn.dev33:sa-token-spring-boot3-starter:1.39.0'
+
+    // EasyExcel：本地解析工单导入文件
+    implementation 'com.alibaba:easyexcel:3.3.3'
+
+
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
