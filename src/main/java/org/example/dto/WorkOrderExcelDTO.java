@@ -40,5 +40,23 @@ public class WorkOrderExcelDTO {
     private String perBarrelWeight;  // 每桶重量
     private String moveType;         // 移动类型（货物移动文件才有，用于识别单据大类）
 
+    // ===== 以下为「货物移动」文件专有列 =====
+    private String movementFlag;     // 移动标识
+    private String item;             // 项目
+    private String entryQty;         // 以录入单位表示的数量
+    private String storageLocation;  // 存储地点
+    private String materialDoc;      // 物料凭证
+    private String creditFlag;       // 借/贷标识
+    private String quantity;         // 数量
+    private String postingDate;      // 过账日期
+
+    // ===== 以下为「生产入库单」/「领料汇总」文件专有列 =====
+    private String seqNo;            // 序号
+    private String documentNo;       // 单据号（领料汇总）
+    private String materialName;     // 物料名称
+    private String inboundDate;      // 日期
+    private String inboundQty;       // 领料数量（生产入库单里即入库数量）
+    private String documentCell;     // 单据（=DISPIMG("ID_xxx",1) 文本）
+
     private Map<String, Object> extMap = new HashMap<>();
 }

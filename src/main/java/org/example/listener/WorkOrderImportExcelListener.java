@@ -47,6 +47,7 @@ public class WorkOrderImportExcelListener extends AnalysisEventListener<Map<Inte
                 case "批次": dto.setBatchNo(cellValue); break;
                 case "订单数量(GMEIN)": dto.setOrderQty(cellValue); break;
                 case "计量单位(=GMEIN)": dto.setUnit(cellValue); break;
+                case "基本计量单位": dto.setUnit(cellValue); break;   // 货物移动文件的叫法
                 case "生产版本": dto.setProdVersion(cellValue); break;
                 case "基本开始日期": dto.setPlanStartDate(cellValue); break;
                 case "基本完成日期": dto.setPlanFinishDate(cellValue); break;
@@ -62,6 +63,24 @@ public class WorkOrderImportExcelListener extends AnalysisEventListener<Map<Inte
                 case "更改时间": dto.setChangeTime(cellValue); break;
                 case "每桶重量(AMEIN)": dto.setPerBarrelWeight(cellValue); break;
                 case "移动类型": dto.setMoveType(cellValue); break;
+                // ===== 货物移动文件专有列 =====
+                case "移动标识": dto.setMovementFlag(cellValue); break;
+                case "项目": dto.setItem(cellValue); break;
+                case "以录入单位表示的数量": dto.setEntryQty(cellValue); break;
+                case "存储地点": dto.setStorageLocation(cellValue); break;
+                case "物料凭证": dto.setMaterialDoc(cellValue); break;
+                case "借/贷标识": dto.setCreditFlag(cellValue); break;
+                case "数量": dto.setQuantity(cellValue); break;
+                case "过账日期": dto.setPostingDate(cellValue); break;
+                // ===== 生产入库单 / 领料汇总文件专有列 =====
+                case "序号": dto.setSeqNo(cellValue); break;
+                case "单据号": dto.setDocumentNo(cellValue); break;
+                case "物料名称": dto.setMaterialName(cellValue); break;
+                case "物料编码": dto.setMaterialCode(cellValue); break;
+                case "日期": dto.setInboundDate(cellValue); break;
+                case "领料数量": dto.setInboundQty(cellValue); break;
+                case "单位": dto.setUnit(cellValue); break;
+                case "单据": dto.setDocumentCell(cellValue); break;
                 default:
                     // 不在固定字段里的，全部放进扩展Map
                     extMap.put(header, cellValue);

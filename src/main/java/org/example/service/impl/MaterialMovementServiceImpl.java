@@ -113,6 +113,17 @@ public class MaterialMovementServiceImpl extends ServiceImpl<MaterialMovementMap
         return vo;
     }
 
+    // ================= 批量保存导入的货物移动数据 =================
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int saveImported(List<MaterialMovement> list) {
+        if (list == null || list.isEmpty()) {
+            return 0;
+        }
+        saveBatch(list);
+        return list.size();
+    }
+
     private MaterialMovement mapToEntity(GoodsMoveExcelDTO dto) {
         MaterialMovement m = new MaterialMovement();
         m.setOrderNo(trim(dto.getOrderNo()));                 // 订单
