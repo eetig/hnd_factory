@@ -6,6 +6,7 @@ import org.example.constant.MovementTypeEnum;
 import org.example.dto.ExcelResult;
 import org.example.dto.GoodsMoveExcelDTO;
 import org.example.dto.GoodsMoveVO;
+import org.example.dto.WorkOrderImportSaveVO;
 import org.example.entity.MaterialMovement;
 import org.example.feign.ExcelParseFeign;
 import org.example.mapper.MaterialMovementMapper;
@@ -22,6 +23,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -114,14 +116,33 @@ public class MaterialMovementServiceImpl extends ServiceImpl<MaterialMovementMap
     }
 
     // ================= 批量保存导入的货物移动数据 =================
+    /**
+     * 按【订单号】整体替换：先删除本批订单下已有的全部货物移动记录，再写入新数据。
+     * 同一订单在文件中出现多行时，这些行都会写入（它们属于同一订单的多个物料明细）。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public int saveImported(List<MaterialMovement> list) {
+    public WorkOrderImportSaveVO saveImported(List<MaterialMovement> list) {
+        WorkOrderImportSaveVO vo = new WorkOrderImportSaveVO();
         if (list == null || list.isEmpty()) {
-            return 0;
+            return vo;
+        }
+
+        Set<String> orderNos = list.stream()
+                .map(MaterialMovement::getOrderNo)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+
+        int deleted = 0;
+        if (!orderNos.isEmpty()) {
+            deleted = baseMapper.delete(new QueryWrapper<MaterialMovement>().in("order_no", orderNos));
         }
         saveBatch(list);
-        return list.size();
+
+        vo.setInsertCount(list.size());
+        vo.setUpdateCount(deleted);
+        vo.setTotal(list.size());
+        return vo;
     }
 
     private MaterialMovement mapToEntity(GoodsMoveExcelDTO dto) {

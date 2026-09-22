@@ -180,10 +180,11 @@ public class WorkOrderImportController {
         try {
             Map<String, Object> data = new HashMap<>();
             if (TYPE_GOODS_MOVE.equals(payload.getBillType())) {
-                int count = materialMovementService.saveImported(payload.getMovements());
-                log.info("货物移动导入保存完成, taskId={}, 条数={}", taskId, count);
-                data.put("addCount", count);
-                data.put("updateCount", 0);
+                WorkOrderImportSaveVO save = materialMovementService.saveImported(payload.getMovements());
+                log.info("货物移动导入保存完成, taskId={}, 新写入={}, 覆盖删除={}",
+                        taskId, save.getInsertCount(), save.getUpdateCount());
+                data.put("addCount", save.getInsertCount());
+                data.put("updateCount", save.getUpdateCount());
             } else if (TYPE_PRODUCTION_INBOUND.equals(payload.getBillType())) {
                 List<String> fileNames = resolveDocumentFileNames(payload);
                 List<ProductionInbound> list = payload.getInbounds();
