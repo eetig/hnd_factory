@@ -3,8 +3,10 @@ package org.example.controller;
 import org.example.dto.ExcelResult;
 import org.example.dto.LoginDTO;
 import org.example.dto.LoginVO;
+import org.example.dto.UserInfoVO;
 import org.example.service.AuthService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,5 +33,11 @@ public class AuthController {
         result.setSuccess(true);
         result.setMsg("退出成功");
         return result;
+    }
+
+    // 获取当前登录用户信息 + 权限集合（需登录；未登录返回 401）
+    @GetMapping("/user/info")
+    public UserInfoVO userInfo() {
+        return authService.getCurrentUserInfo();
     }
 }

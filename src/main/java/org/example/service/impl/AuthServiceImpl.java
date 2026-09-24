@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.example.dto.LoginDTO;
 import org.example.dto.LoginVO;
+import org.example.dto.UserInfoVO;
 import org.example.entity.SysRole;
 import org.example.entity.SysRolePermission;
 import org.example.entity.SysUser;
@@ -47,26 +48,59 @@ public class AuthServiceImpl implements AuthService {
         StpUtil.login(user.getId());
 
         // 3. 组装返回
+        SysRole role = loadRole(user);
         LoginVO vo = new LoginVO();
         vo.setToken(StpUtil.getTokenValue());
         vo.setUserId(user.getId());
         vo.setUsername(user.getUsername());
         vo.setRealName(user.getRealName());
-
-        SysRole role = user.getRoleId() == null ? null : sysRoleMapper.selectById(user.getRoleId());
         vo.setRoleKey(role == null ? null : role.getRoleKey());
         vo.setRoleName(role == null ? null : role.getRoleName());
-
-        List<String> perms = user.getRoleId() == null ? List.of()
-                : sysRolePermissionMapper.selectList(
-                                new QueryWrapper<SysRolePermission>().eq("role_id", user.getRoleId()))
-                        .stream().map(SysRolePermission::getPermissionKey).collect(Collectors.toList());
-        vo.setPermissions(perms);
+        vo.setPermissions(loadPermissions(user));
         return vo;
     }
 
     @Override
     public void logout() {
         StpUtil.logout();
+    }
+
+    @Override
+    public UserInfoVO getCurrentUserInfo() {
+        // 未登录时 StpUtil 抛 NotLoginException，由 GlobalExceptionHandler 转成 401
+        long userId = StpUtil.getLoginIdAsLong();
+
+        SysUser user = sysUserMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException("用户不存在，请重新登录");
+        }
+        if (user.getStatus() != null && user.getStatus() != 1) {
+            throw new BusinessException("账号已被禁用");
+        }
+
+        SysRole role = loadRole(user);
+        UserInfoVO vo = new UserInfoVO();
+        vo.setUserId(user.getId());
+        vo.setUsername(user.getUsername());
+        vo.setRealName(user.getRealName());
+        vo.setRoleKey(role == null ? null : role.getRoleKey());
+        vo.setRoleName(role == null ? null : role.getRoleName());
+        vo.setPermissions(loadPermissions(user));
+        return vo;
+    }
+
+    // ================= 私有工具 =================
+
+    private SysRole loadRole(SysUser user) {
+        return user.getRoleId() == null ? null : sysRoleMapper.selectById(user.getRoleId());
+    }
+
+    private List<String> loadPermissions(SysUser user) {
+        if (user.getRoleId() == null) {
+            return List.of();
+        }
+        return sysRolePermissionMapper.selectList(
+                        new QueryWrapper<SysRolePermission>().eq("role_id", user.getRoleId()))
+                .stream().map(SysRolePermission::getPermissionKey).collect(Collectors.toList());
     }
 }
