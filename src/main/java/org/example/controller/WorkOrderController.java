@@ -49,8 +49,7 @@ public class WorkOrderController {
 
     // 导入分页预览移动到 WorkOrderImportController（/api/work-order/import/preview）
 
-    // 查询工单列表（type 可选，返回工单信息 + 物料图片 url）
-    @SaCheckPermission("work_order:view")
+    // 查询工单列表（type 可选，返回工单信息 + 物料图片 url）—— 查询类接口，免登录
     @GetMapping("/list")
     public ExcelResult<WorkOrderListVO> list(@RequestParam(value = "type", required = false) String type) {
         return workOrderService.listWorkOrders(type);
@@ -63,8 +62,7 @@ public class WorkOrderController {
         return workOrderService.saveWorkOrder(dto);
     }
 
-    // 查询工单详情（工单信息 + 物料图片 url）
-    @SaCheckPermission("work_order:view")
+    // 查询工单详情（工单信息 + 物料图片 url）—— 查询类接口，免登录
     @GetMapping("/detail")
     public ExcelResult<WorkOrderDetailVO> detail(@RequestParam("id") Long id) {
         return workOrderService.getWorkOrderDetail(id);

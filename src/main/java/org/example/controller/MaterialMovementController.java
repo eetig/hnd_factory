@@ -1,5 +1,6 @@
 package org.example.controller;
 
+import cn.dev33.satoken.annotation.SaCheckPermission;
 import org.example.dto.ExcelResult;
 import org.example.service.MaterialMovementService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,8 @@ public class MaterialMovementController {
     @Autowired
     private MaterialMovementService materialMovementService;
 
+    // 货物移动导入（写库操作，需登录 + 权限）—— 旧版一次性导入接口
+    @SaCheckPermission("goods_move:import")
     @PostMapping("/import")
     public ExcelResult<Void> importGoodsMove(
             @RequestPart("file") MultipartFile file,

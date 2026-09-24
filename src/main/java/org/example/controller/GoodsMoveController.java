@@ -1,6 +1,5 @@
 package org.example.controller;
 
-import cn.dev33.satoken.annotation.SaCheckPermission;
 import org.example.dto.ExcelResult;
 import org.example.dto.GoodsMoveVO;
 import org.example.service.MaterialMovementService;
@@ -16,8 +15,7 @@ public class GoodsMoveController {
     @Autowired
     private MaterialMovementService materialMovementService;
 
-    // 货物移动列表（全量返回，前端本地做日期筛选与分页）
-    @SaCheckPermission("goods_move:view")
+    // 货物移动列表（全量返回，前端本地做日期筛选与分页）—— 查询类接口，免登录
     @GetMapping("/list")
     public ExcelResult<GoodsMoveVO> list() {
         return materialMovementService.listGoodsMoves();

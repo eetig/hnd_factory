@@ -42,8 +42,7 @@ public class WorkOrderImageController {
         return Result.success(null);
     }
 
-    // 查询工单下所有图片（弹窗展示用）
-    @SaCheckPermission("work_order:view")
+    // 查询工单下所有图片（弹窗展示用）—— 查询类接口，免登录
     @GetMapping("/list")
     public Result<List<WorkOrderImageVO>> list(@RequestParam("orderNo") String orderNo) {
         return Result.success(workOrderImageService.listImages(orderNo));

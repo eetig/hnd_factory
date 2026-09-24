@@ -1,6 +1,5 @@
 package org.example.controller;
 
-import cn.dev33.satoken.annotation.SaCheckPermission;
 import org.example.dto.ExcelResult;
 import org.example.dto.ProductionInboundVO;
 import org.example.service.ProductionInboundService;
@@ -18,8 +17,7 @@ public class ProductionInboundController {
     @Autowired
     private ProductionInboundService productionInboundService;
 
-    // 生产入库单列表（全量返回，日期筛选/排序/分页由前端本地完成）
-    @SaCheckPermission("inbound:view")
+    // 生产入库单列表（全量返回，日期筛选/排序/分页由前端本地完成）—— 查询类接口，免登录
     @GetMapping("/list")
     public ExcelResult<ProductionInboundVO> list() {
         List<ProductionInboundVO> list = productionInboundService.listAll();
