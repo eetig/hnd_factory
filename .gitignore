@@ -42,3 +42,11 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### 容器部署 ###
+# compose 含真实数据库口令，不入库（与 img-service 保持一致）
+docker-compose.yml
+docker-compose.override.yml
+.env
+# 容器日志挂载目录（宿主机 ./logs）
+logs/

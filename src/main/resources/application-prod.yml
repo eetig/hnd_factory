@@ -1,0 +1,83 @@
+# ============================================================
+# 生产环境配置（容器内生效，由 ENTRYPOINT 的 --spring.profiles.active=prod 激活）
+# 所有地址/账号/端口均通过环境变量注入，换服务器、换密码不需要重新打 jar
+#
+# 三层分离：本文件属「配置层」，改这里要重新打 jar；
+#          日常变更（地址、密码、端口）请改 1Panel compose 的环境变量（「运行层」，只重建容器）
+# ============================================================
+server:
+  port: ${SERVER_PORT:8084}
+  # 优雅停机：容器收到 SIGTERM 后先停止接收新请求，处理完在途请求再退出
+  shutdown: graceful
+
+spring:
+  application:
+    name: hnd_factory
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  cloud:
+    nacos:
+      discovery:
+        # 容器之间用容器名互访，不要写 127.0.0.1（那是容器自己）
+        server-addr: ${NACOS_SERVER_ADDR:1Panel-nacos-qquH-standalone:8848}
+        # Nacos 命名空间，留空=public。用命名空间隔离环境时必须填 namespace 的 ID（不是名称），
+        # 填名称会注册到 public，表现为「注册了但找不到服务」
+        namespace: ${NACOS_NAMESPACE:}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        register-enabled: true
+        # fail-fast=true：Nacos 不可达时启动直接失败，配合 restart: unless-stopped 会一直重试。
+        # 语义是「服务在跑 = 一定注册上了」，避免「启动了但服务列表里看不见」的静默故障。
+        # 仅在本地无 Nacos 调试时才临时设为 false。
+        fail-fast: ${NACOS_FAIL_FAST:true}
+        # 多网卡机器上如果注册错 IP（服务列表可见但调用方 502），取消注释并填正确的内网 IP
+        # ip: ${NACOS_REGISTER_IP:}
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 容器内不可用 127.0.0.1，必须用 docker 网络内的容器名
+    url: jdbc:mysql://${MYSQL_HOST:1Panel-mysql-Ipel}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:123eetig}
+    hikari:
+      maximum-pool-size: ${MYSQL_POOL_MAX:10}
+      minimum-idle: ${MYSQL_POOL_MIN:2}
+      connection-timeout: 30000
+      # 容器刚起时 MySQL 可能还没就绪，允许初始化时重试而不是直接抛错
+      initialization-fail-timeout: 60000
+
+  servlet:
+    multipart:
+      # 生产入库单/领料汇总的 Excel 内嵌单据图片，文件可达数 MB
+      # ⚠️ Nginx 的 client_max_body_size 必须同步调大，否则 413 且请求根本到不了应用
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:50MB}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:50MB}
+
+# ============================================================
+# 本项目不直连 MinIO / Redis：
+#   - 图片上传、预签名 URL、删除均通过 Feign 调用 img-service（@FeignClient name=img-service），
+#     MinIO 的 endpoint / AK / SK 配在 img-service 那边，不要在这里配。
+#   - Sa-Token 使用默认内存存储，没有引入 spring-boot-starter-data-redis。
+#   若后续确需引入，请补对应依赖后再取消下面的注释。
+# ============================================================
+#  data:
+#    redis:
+#      host: ${REDIS_HOST:1Panel-redis-4CjL}
+#      port: ${REDIS_PORT:6379}
+#      password: ${REDIS_PASSWORD:}
+#      database: ${REDIS_DB:0}
+#      timeout: 3000ms
+
+logging:
+  level:
+    root: info
+    org.example: info
+  file:
+    # 输出到挂载目录，1Panel 里持久化到宿主机（首次部署前宿主机 ./logs 需先 mkdir 并 chmod 777）
+    name: /app/logs/hnd_factory.log
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 15
+      total-size-cap: 500MB

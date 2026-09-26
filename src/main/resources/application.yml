@@ -1,25 +1,31 @@
 server:
-  port: 8081 # hnd_factory 服务端口
+  port: ${SERVER_PORT:8084} # hnd_factory 服务端口（容器内外保持一致，不做端口映射转换）
 
 spring:
   application:
     name: hnd_factory # 服务名称，Nacos注册用，Feign里@FeignClient name对应这个
   # mysql配置
+  # 容器内不可用 127.0.0.1（那是容器自己），必须用 docker 网络内的容器名互访
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3306/factory_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-    username: root
-    password: 123eetig
+    url: jdbc:mysql://${MYSQL_HOST:1Panel-mysql-Ipel}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:123eetig}
+    hikari:
+      maximum-pool-size: ${MYSQL_POOL_MAX:10}
+      minimum-idle: ${MYSQL_POOL_MIN:2}
+      connection-timeout: 30000
   # Nacos注册中心
   cloud:
     nacos:
       discovery:
-        server-addr: 127.0.0.1:8848
+        server-addr: ${NACOS_SERVER_ADDR:1Panel-nacos-qquH-standalone:8848} # 容器名，不是 127.0.0.1
   # 文件上传限制：生产入库单含内嵌图片，文件可达数 MB（默认 1MB 会 413）
+  # ⚠️ 改这里的同时，Nginx 的 client_max_body_size 必须同步调大，否则请求到不了应用
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:50MB}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:50MB}
 
 # MyBatis-plus配置
 mybatis-plus:
@@ -31,7 +37,7 @@ mybatis-plus:
 # Sa-Token 基础配置
 sa-token:
   token-name: satoken      # token 名称，前端请求头携带 satoken: <token>
-  timeout: 86400           # token 有效期（秒），86400 = 24 小时，-1 为永不过期
+  timeout: ${SA_TOKEN_TIMEOUT:86400} # token 有效期（秒），86400 = 24 小时，-1 为永不过期
   active-timeout: -1       # 活跃超时（秒），-1 表示不开启
   is-concurrent: true      # 允许同一账号并发登录
   is-share: true           # 并发登录时共用一个 token

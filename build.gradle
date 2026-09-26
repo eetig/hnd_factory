@@ -1,17 +1,21 @@
 plugins {
+    id 'java'
     id 'org.springframework.boot' version '3.2.0'
     id 'io.spring.dependency-management' version '1.1.4'
-    id 'java'
 }
 
 group = 'org.example'
 version = '1.0-SNAPSHOT'
 
 java {
-    sourceCompatibility = '17'
+    // 明确按 Java 21 编译，避免 IDEA / 服务器 JDK 版本不一致导致 UnsupportedClassVersionError
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 repositories {
+    maven { url 'https://maven.aliyun.com/repository/central' }
+    maven { url 'https://maven.aliyun.com/repository/spring' }
     mavenCentral()
 }
 
@@ -60,4 +64,27 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    // 源码含中文（日志/异常文案），必须 UTF-8，否则服务器/CI 编译出现乱码
+    options.encoding = 'UTF-8'
+}
+
+// 禁用普通 jar：build/libs 下只保留一个可执行 jar，Dockerfile 的 COPY 才不会歧义
+tasks.named('jar') {
+    enabled = false
+}
+
+// 固定产物文件名，让 Dockerfile 里 COPY 的路径稳定、不随版本号变化
+bootJar {
+    archiveFileName = 'hnd_factory.jar'
+    // 便于在服务器上确认镜像内跑的到底是哪次构建
+    manifest {
+        attributes(
+                'Implementation-Title': 'hnd_factory',
+                'Implementation-Version': project.version,
+                'Build-Time': new Date().format("yyyy-MM-dd HH:mm:ss")
+        )
+    }
 }
