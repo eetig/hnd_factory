@@ -4,6 +4,7 @@ import org.example.dto.ProductionInboundVO;
 import org.example.dto.WorkOrderImportSaveVO;
 import org.example.entity.ProductionInbound;
 
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,11 @@ public interface ProductionInboundService {
     // 按 (单据号+物料编码) 查已有记录的 id，用于导入时判断走新增还是更新。
     // 入参为待查的单据号集合，返回 Map<组合键, id>（同一单据号下的多条物料都会返回）
     Map<String, Long> findIdByDocAndMaterial(Collection<String> documentNos);
+
+    // 按 (单据号+物料编码) 查已有记录的入库数量。
+    // 用于导入预检：单据号、物料编码、数量三者全同即为重复行，整行跳过（不落库也不上传图片）。
+    // 返回 Map<组合键, 入库数量>（同一单据号下的多条物料都会返回）
+    Map<String, BigDecimal> findQtyByDocAndMaterial(Collection<String> documentNos);
 
     // 查询生产入库单列表（全量，日期筛选/排序/分页由前端本地完成）
     List<ProductionInboundVO> listAll();

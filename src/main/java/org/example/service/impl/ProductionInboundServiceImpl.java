@@ -13,8 +13,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,6 +97,32 @@ public class ProductionInboundServiceImpl extends ServiceImpl<ProductionInboundM
                         p -> DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode()),
                         ProductionInbound::getId,
                         (a, b) -> a));
+    }
+
+    /**
+     * 查已有记录的入库数量，供导入预检判断重复行（单据号+物料编码+数量 三者全同 -> 跳过）。
+     *
+     * 这里用 HashMap 手工装填而不是 Collectors.toMap：inbound_qty 列可为 null，
+     * 而 toMap 底层走 map.merge，value 为 null 会直接抛 NPE。
+     * 而且必须让「数量为 null 的已有记录」也留在 map 里（value 为 null），
+     * 否则该记录会被误判成「库里不存在」，保存时走 insert 撞唯一键。
+     */
+    @Override
+    public Map<String, BigDecimal> findQtyByDocAndMaterial(Collection<String> documentNos) {
+        if (documentNos == null || documentNos.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, BigDecimal> qtyMap = new HashMap<>();
+        for (ProductionInbound p : baseMapper.selectList(
+                new QueryWrapper<ProductionInbound>()
+                        .select("document_no", "material_code", "inbound_qty")
+                        .in("document_no", documentNos))) {
+            if (!StringUtils.hasText(p.getDocumentNo())) {
+                continue;
+            }
+            qtyMap.put(DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode()), p.getInboundQty());
+        }
+        return qtyMap;
     }
 
     @Override

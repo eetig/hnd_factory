@@ -25,6 +25,7 @@ import org.example.service.WorkOrderService;
 import org.example.util.ExcelCleanUtil;
 import org.example.util.DocMaterialKey;
 import org.example.util.GoodsMoveImportUtil;
+import org.example.util.ImportDedupeUtil;
 import org.example.util.InMemoryMultipartFile;
 import org.example.util.MaterialPickSummaryImportUtil;
 import org.example.util.ProductionInboundImportUtil;
@@ -44,6 +45,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -186,27 +188,72 @@ public class WorkOrderImportController {
                 data.put("addCount", save.getInsertCount());
                 data.put("updateCount", save.getUpdateCount());
             } else if (TYPE_PRODUCTION_INBOUND.equals(payload.getBillType())) {
-                List<String> fileNames = resolveDocumentFileNames(payload);
-                List<ProductionInbound> list = payload.getInbounds();
-                for (int i = 0; i < list.size() && i < fileNames.size(); i++) {
-                    list.get(i).setFileName(fileNames.get(i));
+                // 先剔除「单据号 + 物料编码 + 数量」三者全同的重复行，再只为剩下的行上传图片。
+                // 图片上传必须先于 saveImported（fileName 要回填进去），所以判重只能放在这里 ——
+                // 不先过滤的话，重复导入会把内嵌图一遍遍重传到 MinIO。
+                List<ProductionInbound> all = payload.getInbounds();
+                List<String> allDocIds = payload.getDocumentIds() == null ? List.of() : payload.getDocumentIds();
+                Map<String, BigDecimal> dbQty = productionInboundService.findQtyByDocAndMaterial(
+                        all.stream().map(ProductionInbound::getDocumentNo)
+                                .filter(StringUtils::hasText).collect(Collectors.toSet()));
+
+                List<ProductionInbound> kept = new ArrayList<>();
+                List<String> keptDocIds = new ArrayList<>();
+                int skipCount = 0;
+                for (int i = 0; i < all.size(); i++) {
+                    ProductionInbound row = all.get(i);
+                    String key = DocMaterialKey.of(row.getDocumentNo(), row.getMaterialCode());
+                    if (dbQty.containsKey(key) && ImportDedupeUtil.isSameQty(dbQty.get(key), row.getInboundQty())) {
+                        skipCount++;
+                        continue;
+                    }
+                    kept.add(row);
+                    // documentIds 与实体列表按下标对齐，过滤时必须成对搬运，否则图片会串行
+                    keptDocIds.add(i < allDocIds.size() ? allDocIds.get(i) : null);
                 }
-                WorkOrderImportSaveVO save = productionInboundService.saveImported(list);
-                log.info("生产入库单导入保存完成, taskId={}, 新增={}, 更新={}, 图片={}张",
-                        taskId, save.getInsertCount(), save.getUpdateCount(), uploadedCount(fileNames));
+
+                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds);
+                for (int i = 0; i < kept.size() && i < fileNames.size(); i++) {
+                    kept.get(i).setFileName(fileNames.get(i));
+                }
+                WorkOrderImportSaveVO save = productionInboundService.saveImported(kept);
+                log.info("生产入库单导入保存完成, taskId={}, 新增={}, 更新={}, 跳过={}, 图片={}张",
+                        taskId, save.getInsertCount(), save.getUpdateCount(), skipCount, uploadedCount(fileNames));
                 data.put("addCount", save.getInsertCount());
                 data.put("updateCount", save.getUpdateCount());
+                data.put("skipCount", skipCount);
             } else if (TYPE_PICK_SUMMARY.equals(payload.getBillType())) {
-                List<String> fileNames = resolveDocumentFileNames(payload);
-                List<MaterialPickSummary> list = payload.getPickSummaries();
-                for (int i = 0; i < list.size() && i < fileNames.size(); i++) {
-                    list.get(i).setFileName(fileNames.get(i));
+                // 同上：领料汇总的重复判定同样用「单据号 + 物料编码 + 数量」三者全同
+                List<MaterialPickSummary> all = payload.getPickSummaries();
+                List<String> allDocIds = payload.getDocumentIds() == null ? List.of() : payload.getDocumentIds();
+                Map<String, BigDecimal> dbQty = materialPickSummaryService.findQtyByDocAndMaterial(
+                        all.stream().map(MaterialPickSummary::getDocumentNo)
+                                .filter(StringUtils::hasText).collect(Collectors.toSet()));
+
+                List<MaterialPickSummary> kept = new ArrayList<>();
+                List<String> keptDocIds = new ArrayList<>();
+                int skipCount = 0;
+                for (int i = 0; i < all.size(); i++) {
+                    MaterialPickSummary row = all.get(i);
+                    String key = DocMaterialKey.of(row.getDocumentNo(), row.getMaterialCode());
+                    if (dbQty.containsKey(key) && ImportDedupeUtil.isSameQty(dbQty.get(key), row.getPickQty())) {
+                        skipCount++;
+                        continue;
+                    }
+                    kept.add(row);
+                    keptDocIds.add(i < allDocIds.size() ? allDocIds.get(i) : null);
                 }
-                WorkOrderImportSaveVO save = materialPickSummaryService.saveImported(list);
-                log.info("领料汇总导入保存完成, taskId={}, 新增={}, 更新={}, 图片={}张",
-                        taskId, save.getInsertCount(), save.getUpdateCount(), uploadedCount(fileNames));
+
+                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds);
+                for (int i = 0; i < kept.size() && i < fileNames.size(); i++) {
+                    kept.get(i).setFileName(fileNames.get(i));
+                }
+                WorkOrderImportSaveVO save = materialPickSummaryService.saveImported(kept);
+                log.info("领料汇总导入保存完成, taskId={}, 新增={}, 更新={}, 跳过={}, 图片={}张",
+                        taskId, save.getInsertCount(), save.getUpdateCount(), skipCount, uploadedCount(fileNames));
                 data.put("addCount", save.getInsertCount());
                 data.put("updateCount", save.getUpdateCount());
+                data.put("skipCount", skipCount);
             } else {
                 WorkOrderImportSaveVO save = workOrderService.saveImported(payload.getWorkOrders());
                 log.info("工单导入保存完成, taskId={}, 新增={}, 更新={}", taskId, save.getInsertCount(), save.getUpdateCount());
@@ -419,12 +466,13 @@ public class WorkOrderImportController {
                 candidates.stream().map(p -> DocMaterialKey.label(p.getDocumentNo(), p.getMaterialCode())).collect(Collectors.toList()),
                 candidateRows, errorRows);
 
-        // 3) 查数据库中已存在的记录（存在 -> 保存时更新，不存在 -> 新增）
+        // 3) 查数据库中已有记录的数量
+        //    存在 -> 保存时更新；存在且数量相同 -> 保存时整行跳过；不存在 -> 新增
         Set<String> docs = candidates.stream()
                 .map(MaterialPickSummary::getDocumentNo)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
-        Set<String> existingInDb = materialPickSummaryService.findIdByDocAndMaterial(docs).keySet();
+        Map<String, BigDecimal> dbQty = materialPickSummaryService.findQtyByDocAndMaterial(docs);
 
         // 4) 组装预览行（仅文件内重复的行不进预览）
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -447,7 +495,10 @@ public class WorkOrderImportController {
             row.put("pickQty", p.getPickQty());             // 领料数量
             row.put("unit", p.getUnit());                   // 单位
             row.put("hasDocument", documentId != null);     // 是否带单据图片
-            row.put("isUpdate", existingInDb.contains(key)); // true=更新已有，false=新增
+            row.put("isUpdate", dbQty.containsKey(key));    // true=更新已有，false=新增
+            // 单据号 + 物料编码 + 数量 三者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
+            row.put("isDuplicate", dbQty.containsKey(key)
+                    && ImportDedupeUtil.isSameQty(dbQty.get(key), p.getPickQty()));
             rows.add(row);
         }
         return rows;
@@ -488,12 +539,13 @@ public class WorkOrderImportController {
                 candidates.stream().map(p -> DocMaterialKey.label(p.getDocumentNo(), p.getMaterialCode())).collect(Collectors.toList()),
                 candidateRows, errorRows);
 
-        // 3) 查数据库中已存在的记录（存在 -> 保存时更新，不存在 -> 新增）
+        // 3) 查数据库中已有记录的数量
+        //    存在 -> 保存时更新；存在且数量相同 -> 保存时整行跳过；不存在 -> 新增
         Set<String> docs = candidates.stream()
                 .map(ProductionInbound::getDocumentNo)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
-        Set<String> existingInDb = productionInboundService.findIdByDocAndMaterial(docs).keySet();
+        Map<String, BigDecimal> dbQty = productionInboundService.findQtyByDocAndMaterial(docs);
 
         // 4) 组装预览行（仅文件内重复的行不进预览）
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -516,7 +568,10 @@ public class WorkOrderImportController {
             row.put("inboundQty", p.getInboundQty());       // 领料数量（入库数量）
             row.put("unit", p.getUnit());                   // 单位
             row.put("hasDocument", documentId != null);     // 是否带单据图片
-            row.put("isUpdate", existingInDb.contains(key)); // true=更新已有，false=新增
+            row.put("isUpdate", dbQty.containsKey(key));    // true=更新已有，false=新增
+            // 单据号 + 物料编码 + 数量 三者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
+            row.put("isDuplicate", dbQty.containsKey(key)
+                    && ImportDedupeUtil.isSameQty(dbQty.get(key), p.getInboundQty()));
             rows.add(row);
         }
         return rows;
@@ -559,14 +614,16 @@ public class WorkOrderImportController {
     /**
      * 提取 xlsx 内嵌单据图片并上传 MinIO，返回与 documentIds 对齐的 fileName 列表。
      * 同一张图被多行引用时只上传一次。
+     *
+     * 入参由调用方传入而不是从 payload 里取：调用方会先剔除重复行，只把需要上传的行传进来，
+     * 这样重复导入时不会产生任何 MinIO 对象（全部行都跳过时连解压 xlsx 这一步都省了）。
      */
-    private List<String> resolveDocumentFileNames(WorkOrderImportPayload payload) {
-        List<String> documentIds = payload.getDocumentIds();
-        if (documentIds == null || documentIds.isEmpty() || payload.getSourceBytes() == null) {
+    private List<String> resolveDocumentFileNames(byte[] sourceBytes, List<String> documentIds) {
+        if (documentIds == null || documentIds.isEmpty() || sourceBytes == null) {
             return List.of();
         }
 
-        Map<String, WpsCellImageUtil.ExtractedImage> images = WpsCellImageUtil.extract(payload.getSourceBytes());
+        Map<String, WpsCellImageUtil.ExtractedImage> images = WpsCellImageUtil.extract(sourceBytes);
         List<String> fileNames = new ArrayList<>();
         if (images.isEmpty()) {
             for (int i = 0; i < documentIds.size(); i++) {
