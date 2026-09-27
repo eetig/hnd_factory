@@ -1,7 +1,7 @@
 server:
-  # 本机开发默认 8081（与前端 vite 代理一致）；
-  # 容器部署由 application-prod.yml 覆盖为 8084，此处不影响生产
-  port: ${SERVER_PORT:8081}
+  # 本机开发默认 8084（与容器一致，避免两套端口心智负担）；
+  # ⚠️ 前端 hnd_factory_UI/vite.config.js 的 proxy target 需同步指向 8084
+  port: ${SERVER_PORT:8084}
 
 spring:
   application:
