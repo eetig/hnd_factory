@@ -1,14 +1,16 @@
 server:
-  port: ${SERVER_PORT:8084} # hnd_factory 服务端口（容器内外保持一致，不做端口映射转换）
+  # 本机开发默认 8081（与前端 vite 代理一致）；
+  # 容器部署由 application-prod.yml 覆盖为 8084，此处不影响生产
+  port: ${SERVER_PORT:8081}
 
 spring:
   application:
     name: hnd_factory # 服务名称，Nacos注册用，Feign里@FeignClient name对应这个
   # mysql配置
-  # 容器内不可用 127.0.0.1（那是容器自己），必须用 docker 网络内的容器名互访
+  # 本机开发默认连本机 MySQL；容器部署由 application-prod.yml 覆盖为 1Panel 的容器名
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${MYSQL_HOST:1Panel-mysql-Ipel}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:123eetig}
     hikari:
@@ -19,7 +21,8 @@ spring:
   cloud:
     nacos:
       discovery:
-        server-addr: ${NACOS_SERVER_ADDR:1Panel-nacos-qquH-standalone:8848} # 容器名，不是 127.0.0.1
+        # 本机开发默认连本机 Nacos；容器部署由 application-prod.yml 覆盖为容器名
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
   # 文件上传限制：生产入库单含内嵌图片，文件可达数 MB（默认 1MB 会 413）
   # ⚠️ 改这里的同时，Nginx 的 client_max_body_size 必须同步调大，否则请求到不了应用
   servlet:

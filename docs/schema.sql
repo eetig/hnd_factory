@@ -289,7 +289,8 @@ WHERE NOT EXISTS (
 -- 初始账号
 --
 --   admin / admin123   管理员（全部权限）
---   test  / test       游客（只读）
+--   guest / admin      游客（只读，不能导入/上传任何文件）
+--   test  / test       游客（只读，早期测试账号）
 --
 -- 密码为 BCrypt 密文（$2a$ 前缀，与 Sa-Token 内置 BCrypt 兼容）。
 -- 如需重置密码，用项目的 org.example.util.BCryptUtil.encode("新密码") 生成后替换。
@@ -300,6 +301,16 @@ SELECT 'admin',
        '系统管理员',
        r.`id`, 1
 FROM `sys_role` r WHERE r.`role_key` = 'admin'
+ON DUPLICATE KEY UPDATE `role_id` = VALUES(`role_id`), `real_name` = VALUES(`real_name`);
+
+-- 游客账号：只读，不能使用任何文件上传（导入 Excel / 上传工单图片）。
+-- 权限来自 guest 角色，该角色只授予 *:view，不含 import / image:upload。
+INSERT INTO `sys_user` (`username`, `password`, `real_name`, `role_id`, `status`)
+SELECT 'guest',
+       '$2a$12$qwC0z3.3HxTs.4Rkuc/iFOG4rIpmY2xGpa3ZomM3VolHj9rB1ZbrW',
+       '游客',
+       r.`id`, 1
+FROM `sys_role` r WHERE r.`role_key` = 'guest'
 ON DUPLICATE KEY UPDATE `role_id` = VALUES(`role_id`), `real_name` = VALUES(`real_name`);
 
 INSERT INTO `sys_user` (`username`, `password`, `real_name`, `role_id`, `status`)
@@ -356,3 +367,13 @@ ON DUPLICATE KEY UPDATE `role_id` = VALUES(`role_id`), `real_name` = VALUES(`rea
 -- INSERT INTO `sys_role` (`role_name`, `role_key`, `description`)
 --   VALUES ('游客','guest','只读，不能执行任何写操作')
 --   ON DUPLICATE KEY UPDATE `role_name` = VALUES(`role_name`);
+
+-- -- 9) 新增游客账号 guest/admin（只读，不能导入/上传文件）
+-- --    权限由 guest 角色决定，无需额外授予：该角色只有 *:view，没有 import 与 image:upload
+-- INSERT INTO `sys_user` (`username`, `password`, `real_name`, `role_id`, `status`)
+-- SELECT 'guest',
+--        '$2a$12$qwC0z3.3HxTs.4Rkuc/iFOG4rIpmY2xGpa3ZomM3VolHj9rB1ZbrW',
+--        '游客',
+--        r.`id`, 1
+-- FROM `sys_role` r WHERE r.`role_key` = 'guest'
+-- ON DUPLICATE KEY UPDATE `role_id` = VALUES(`role_id`), `real_name` = VALUES(`real_name`);
