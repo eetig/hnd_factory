@@ -1,20 +1,54 @@
 # ============================================================
 # 本地开发配置模板
 #
-# 用法：复制为同目录下的 application.yml，填入真实口令
+# 用法：复制为同目录下的 application.yml（该文件已被 .gitignore 排除，不会提交）
 #     cp config/application.yml.example config/application.yml
 #
 # 为什么放在这里：
 #   Spring Boot 会自动加载「工作目录/config/application.yml」，
-#   且优先级高于 classpath 里的 application.yml，
-#   因此可以在不改动（也不提交）仓库内配置文件的前提下覆盖本地参数。
+#   优先级高于 classpath 里的 application.yml 和 application-prod.yml，
+#   所以本地覆盖不需要改动（也不会提交）仓库内的任何配置文件。
 #
-# application.yml 本身已被 .gitignore 排除，不会误提交。
-# 仓库内的 application*.yml 一律不写任何口令默认值。
+# 为什么不共享：
+#   本文件被 .gitignore 排除 → 每台机器各存一份，互不覆盖、不会误提交。
+#   代价是换新机器要手动创建一次。
+#
+# ────────────────────────────────────────────────────────────
+# ⚠️ Nacos 地址最容易填错的地方（已实测踩过，务必看）
+#
+#   server-addr 要填「服务端 API」端口，不是「控制台」端口。
+#   Nacos 3.x 起两者分开了：
+#       服务端 API  :8848    ← server-addr 填这个
+#       控制台      :8080    ← 浏览器里打开的地址，填进 server-addr 必然注册失败
+#
+#   自检命令（返回 200 就说明这是服务端 API）：
+#     curl -s -o /dev/null -w "%{http_code}\n" \
+#          http://<nacos-host>:8848/nacos/v1/ns/operator/metrics
+#
+#   注意：日志里的报错未必指向端口。填错端口常见表现是反复重试注册、
+#         或报 Param check invalid，不会直接说"端口错了"。
+# ────────────────────────────────────────────────────────────
+#
+# 三个环境的 Nacos 地址（本文件只管「本地」这一档）：
+#
+#   家里       : 192.168.3.7:8848
+#   公司       : 127.0.0.1:8848
+#   远程服务器 : 不用本文件！容器内工作目录没有 config/，
+#                仍走 application-prod.yml + compose 的 NACOS_SERVER_ADDR
 # ============================================================
 
 spring:
+  cloud:
+    nacos:
+      discovery:
+        # 按你当前所在环境改成上面三个值之一
+        server-addr: 192.168.3.7:8848
+
   datasource:
-    # 本地 MySQL 口令。
-    # 生产环境不用这个文件，由 1Panel compose 的 MYSQL_PASSWORD 环境变量注入。
-    password: 在此填入你的本地数据库口令
+    # ⚠️ 这里整条 url 会覆盖 application.yml 里的默认值（Spring 无法只覆盖其中的 host），
+    #    所以仓库里那条 url 若改了参数，记得同步这一行。
+    url: jdbc:mysql://192.168.3.7:3306/factory_db?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    # 本地 MySQL 口令。生产不用本文件，由 compose 的 MYSQL_PASSWORD 环境变量注入；
+    # 仓库内任何 application*.yml 一律不写口令默认值。
+    password: 在此填入你的数据库口令
