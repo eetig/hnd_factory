@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.example.constant.WorkOrderTypeEnum;
 import org.example.dto.ExcelResult;
-import org.example.dto.ImgResult;
 import org.example.dto.WorkOrderDetailVO;
 import org.example.dto.WorkOrderExcelDTO;
 import org.example.dto.WorkOrderImageVO;
@@ -18,12 +17,12 @@ import org.example.entity.WorkOrder;
 import org.example.entity.WorkOrderImage;
 import org.example.exception.BusinessException;
 import org.example.feign.ExcelParseFeign;
-import org.example.feign.ImgFeignClient;
 import org.example.mapper.WorkOrderImageMapper;
 import org.example.mapper.WorkOrderMapper;
 import org.example.service.WorkOrderService;
 import org.example.util.WorkOrderImportUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -42,10 +41,11 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
     private ExcelParseFeign excelParseFeign;
 
     @Autowired
-    private ImgFeignClient imgFeignClient;
-
-    @Autowired
     private WorkOrderImageMapper workOrderImageMapper;
+
+    /** 图片对外基础路径：同源部署留空，前端拿到相对路径（契约 2.3） */
+    @Value("${image.base-url:}")
+    private String imageBaseUrl;
 
     // ================= 导入：Excel 文件 =================
     @Override
@@ -283,15 +283,27 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
     }
 
     // ================= 私有工具 =================
+
+    /**
+     * 原图：固定 URL，纯字符串拼接。
+     *
+     * 不再调用 Feign：预签名 URL 每次都带新的 X-Amz-Date，浏览器按 URL 缓存，
+     * URL 一变就全部重下；且列表组装时会逐张远程调用（变更-001 根因 2、3）。
+     */
     private String toUrl(String fileName) {
-        ImgResult<String> r = imgFeignClient.getPresignedUrl(fileName);
-        return r != null && r.getCode() == 200 ? r.getData() : null;
+        return StringUtils.hasText(fileName) ? imageBaseUrl + "/files/" + fileName : null;
+    }
+
+    /** 缩略图：固定 URL */
+    private String toThumbUrl(String fileName) {
+        return StringUtils.hasText(fileName) ? imageBaseUrl + "/thumbs/" + fileName : null;
     }
 
     private WorkOrderImageVO toImageVO(WorkOrderImage img) {
         WorkOrderImageVO vo = new WorkOrderImageVO();
         vo.setImageId(img.getId());
         vo.setUrl(toUrl(img.getFileName()));
+        vo.setThumbnailUrl(toThumbUrl(img.getFileName()));
         return vo;
     }
 

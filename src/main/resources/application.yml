@@ -40,6 +40,12 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true # 下划线自动转驼峰，数据库pick_no映射pickNo
 
+# 图片对外基础路径（见《前后端改动统筹》变更-001）
+# 同源部署留空 → 前端拿到 /files/xxx、/thumbs/xxx 相对路径；
+# 非同源部署时填域名（如 https://img.example.com），由 Nginx 路由到 img-service。
+image:
+  base-url: ${IMAGE_BASE_URL:}
+
 # Sa-Token 基础配置
 sa-token:
   token-name: satoken      # token 名称，前端请求头携带 satoken: <token>

@@ -1,6 +1,5 @@
 package org.example.dto;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -18,7 +17,9 @@ public class ProductionInboundVO {
     private BigDecimal inboundQty;   // 入库数量
     private String unit;             // 单位
 
-    /** 线下单据图片：带签名的完整 url；没有则不返回该字段 */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
+    /** 列表缩略图：相对路径（如 /thumbs/xxx.jpg）；无图片为 null */
+    private String thumbnailUrl;
+
+    /** 原图：相对路径（如 /files/xxx.jpg）；无图片为 null。字段名沿用旧契约，语义已由「预签名URL」变为「同源路径」 */
     private String imageUrl;
 }

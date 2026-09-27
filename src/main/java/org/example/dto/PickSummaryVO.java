@@ -16,5 +16,10 @@ public class PickSummaryVO {
     private LocalDate pickDate;      // 领料时间
     private BigDecimal pickQty;      // 领料数量
     private String unit;             // 单位
-    private String imageUrl;         // 单据图片预签名访问 url（由 fileName 实时生成）
+
+    /** 列表缩略图：相对路径（如 /thumbs/xxx.jpg）；无图片为 null */
+    private String thumbnailUrl;
+
+    /** 原图：相对路径（如 /files/xxx.jpg）；无图片为 null。字段名沿用旧契约，语义已由「预签名URL」变为「同源路径」 */
+    private String imageUrl;
 }
