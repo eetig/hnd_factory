@@ -1,6 +1,6 @@
 package org.example.service.impl;
 
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.example.dto.FileAttachmentDTO;
 import org.example.dto.FileQueryDTO;
 import org.example.dto.MaterialPickVO;

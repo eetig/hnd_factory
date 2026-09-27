@@ -8,3 +8,7 @@ pluginManagement {
 }
 
 rootProject.name = 'hnd_factory'
+
+// 共享契约模块（兄弟目录），复合构建引用，无需发布到 Maven 仓库。
+// 注意：克隆本服务时必须把 shared-contract 一起克隆到同级目录，否则构建失败。
+includeBuild('../shared-contract')

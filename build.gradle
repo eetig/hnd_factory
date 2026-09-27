@@ -1,7 +1,7 @@
 plugins {
     id 'java'
-    id 'org.springframework.boot' version '3.2.0'
-    id 'io.spring.dependency-management' version '1.1.4'
+    id 'org.springframework.boot' version '3.5.16'
+    id 'io.spring.dependency-management' version '1.1.7'
 }
 
 group = 'org.example'
@@ -21,10 +21,10 @@ repositories {
 
 dependencyManagement {
     imports {
-        // Spring Cloud 版本
-        mavenBom "org.springframework.cloud:spring-cloud-dependencies:2023.0.0"
-        // Spring Cloud Alibaba 版本管理
-        mavenBom "com.alibaba.cloud:spring-cloud-alibaba-dependencies:2023.0.1.0"
+        // Spring Cloud BOM，与 Spring Boot 3.5.x 官方配对
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:2025.0.3"
+        // Spring Cloud Alibaba BOM
+        mavenBom "com.alibaba.cloud:spring-cloud-alibaba-dependencies:2025.0.0.0"
     }
 }
 
@@ -33,33 +33,34 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     // 参数校验
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-    // OpenFeign 微服务调用
+    // OpenFeign 微服务调用：版本一律交给上面的 BOM 管理。
+    // 此前这里还写死过 :4.1.0，会覆盖 BOM 并在 BOM 升级时把版本拽回旧版，已移除。
     implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
-    // ✅ 新增：SpringCloud LoadBalancer 负载均衡（Feign+nacos服务发现必须）
+    // SpringCloud LoadBalancer 负载均衡（Feign+nacos服务发现必须）
     implementation 'org.springframework.cloud:spring-cloud-starter-loadbalancer'
     // MyBatis Plus SpringBoot3专用
-    implementation 'com.baomidou:mybatis-plus-spring-boot3-starter:3.5.5'
+    implementation 'com.baomidou:mybatis-plus-spring-boot3-starter:3.5.17'
     // MySQL驱动
     implementation 'com.mysql:mysql-connector-j'
     // Lombok
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
-    // nacos 服务注册发现
+    // nacos 服务注册发现（版本由 BOM 管理）
     implementation 'com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-discovery'
 
     // 单元测试
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 
-    //feign
-    implementation 'org.springframework.cloud:spring-cloud-starter-openfeign:4.1.0'
-
-    implementation 'cn.dev33:sa-token-spring-boot3-starter:1.39.0'
+    // 权限框架
+    implementation 'cn.dev33:sa-token-spring-boot3-starter:1.46.0'
 
     // EasyExcel：本地解析工单导入文件
     implementation 'com.alibaba:easyexcel:3.3.3'
 
-
+    // 服务间共享契约（ExcelResult / GoodsMoveExcelDTO / WorkOrderExcelDTO），
+    // 由 shared-contract 定义唯一一份，勿在此另行复制
+    implementation 'org.example:shared-contract:1.0-SNAPSHOT'
 }
 
 tasks.named('test') {
