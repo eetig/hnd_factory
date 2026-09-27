@@ -12,7 +12,10 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:123eetig}
+    # 不设默认值：口令绝不能写进仓库（本文件在公开仓库中，且历史提交无法撤销）。
+    # 本地开发请在工作目录建 config/application.yml（已 gitignore，见 config/application.yml.example）；
+    # 容器部署由 1Panel 的 MYSQL_PASSWORD 环境变量注入。
+    password: ${MYSQL_PASSWORD:}
     hikari:
       maximum-pool-size: ${MYSQL_POOL_MAX:10}
       minimum-idle: ${MYSQL_POOL_MIN:2}

@@ -1,0 +1,20 @@
+# ============================================================
+# 本地开发配置模板
+#
+# 用法：复制为同目录下的 application.yml，填入真实口令
+#     cp config/application.yml.example config/application.yml
+#
+# 为什么放在这里：
+#   Spring Boot 会自动加载「工作目录/config/application.yml」，
+#   且优先级高于 classpath 里的 application.yml，
+#   因此可以在不改动（也不提交）仓库内配置文件的前提下覆盖本地参数。
+#
+# application.yml 本身已被 .gitignore 排除，不会误提交。
+# 仓库内的 application*.yml 一律不写任何口令默认值。
+# ============================================================
+
+spring:
+  datasource:
+    # 本地 MySQL 口令。
+    # 生产环境不用这个文件，由 1Panel compose 的 MYSQL_PASSWORD 环境变量注入。
+    password: 在此填入你的本地数据库口令

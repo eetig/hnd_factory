@@ -39,7 +39,9 @@ spring:
     # 容器内不可用 127.0.0.1，必须用 docker 网络内的容器名
     url: jdbc:mysql://${MYSQL_HOST:1Panel-mysql-Ipel}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:123eetig}
+    # 不设默认值：口令绝不能写进仓库。生产由 1Panel compose 的 MYSQL_PASSWORD 环境变量注入，
+    # 未注入时启动即失败（fail-fast），好过静默沿用一个已泄露的口令。
+    password: ${MYSQL_PASSWORD:}
     hikari:
       maximum-pool-size: ${MYSQL_POOL_MAX:10}
       minimum-idle: ${MYSQL_POOL_MIN:2}
