@@ -51,8 +51,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -154,17 +156,87 @@ public class WorkOrderImportController {
         vo.setTotal(dtoList.size());
         vo.setList(rows);
         vo.setErrorRows(errorRows);
+        vo.setNeedImageIds(collectNeedImageIds(rows));
 
-        log.info("导入解析完成, taskId={}, 单据类型={}, 总行数={}, 有效={}, 错误={}",
-                taskId, billType, dtoList.size(), payload.size(), errorRows.size());
+        log.info("导入解析完成, taskId={}, 单据类型={}, 总行数={}, 有效={}, 错误={}, 待传图={}",
+                taskId, billType, dtoList.size(), payload.size(), errorRows.size(), vo.getNeedImageIds().size());
         return Result.success("解析成功", vo);
     }
 
+    /**
+     * 汇总本次导入需要上传的单据图 ID（去重）。
+     *
+     * 只取「非重复行」的 dispimgId：重复行在 save 阶段会被整体跳过，
+     * 其图片无需上传（见变更-002）。多行共用一张图时只出现一次。
+     */
+    private List<String> collectNeedImageIds(List<Map<String, Object>> rows) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (Boolean.TRUE.equals(row.get("isDuplicate"))) {
+                continue;
+            }
+            Object id = row.get("dispimgId");
+            if (id instanceof String s && !s.isBlank()) {
+                ids.add(s);
+            }
+        }
+        return new ArrayList<>(ids);
+    }
+
     // ================= 接口2：确认保存（按单据大类路由到对应表） =================
+
+    /**
+     * 兼容版：JSON body {taskId}，不带图片。
+     * 图片由后端从缓存的原文件字节里提取（不升级前端时走这条，行为与之前完全一致）。
+     */
     @SaCheckPermission("work_order:import")
-    @PostMapping("/save")
+    @PostMapping(value = "/save", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Result<Map<String, Object>> save(@RequestBody WorkOrderImportSaveDTO body) {
         String taskId = body == null ? null : body.getTaskId();
+        return doSave(taskId, Map.of());
+    }
+
+    /**
+     * 变更-002：multipart (taskId + files[])，图片由前端按预览返回的 needImageIds 按需提供。
+     *
+     * 文件名规则：每个文件的名字必须是 dispimgId，扩展名任意。
+     * 例：ID_17658135BAF14166971C315242F45DAE.jpg
+     *
+     * 未提供的图片会自动回退到「从缓存的原文件里提取」，因此漏传不会导致导入失败。
+     */
+    @SaCheckPermission("work_order:import")
+    @PostMapping(value = "/save", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<Map<String, Object>> saveWithImages(
+            @RequestParam("taskId") String taskId,
+            @RequestPart(value = "files", required = false) MultipartFile[] files) {
+        Map<String, byte[]> provided = new LinkedHashMap<>();
+        if (files != null) {
+            for (MultipartFile f : files) {
+                String id = dispimgIdOf(f.getOriginalFilename());
+                if (id == null) {
+                    continue;
+                }
+                try {
+                    provided.put(id, f.getBytes());
+                } catch (Exception e) {
+                    log.warn("读取前端上传图片失败, 文件名={}, 原因={}", f.getOriginalFilename(), e.getMessage());
+                }
+            }
+        }
+        log.info("导入保存（multipart）, taskId={}, 前端提供图片={} 张", taskId, provided.size());
+        return doSave(taskId, provided);
+    }
+
+    /** 从上传文件名里取出 dispimgId（去掉扩展名），约定文件名即 ID */
+    private String dispimgIdOf(String filename) {
+        if (!StringUtils.hasText(filename)) {
+            return null;
+        }
+        int dot = filename.lastIndexOf('.');
+        return dot > 0 ? filename.substring(0, dot) : filename;
+    }
+
+    private Result<Map<String, Object>> doSave(String taskId, Map<String, byte[]> providedImages) {
         if (!StringUtils.hasText(taskId)) {
             return Result.fail("taskId 不能为空");
         }
@@ -212,7 +284,7 @@ public class WorkOrderImportController {
                     keptDocIds.add(i < allDocIds.size() ? allDocIds.get(i) : null);
                 }
 
-                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds);
+                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds, providedImages);
                 for (int i = 0; i < kept.size() && i < fileNames.size(); i++) {
                     kept.get(i).setFileName(fileNames.get(i));
                 }
@@ -244,7 +316,7 @@ public class WorkOrderImportController {
                     keptDocIds.add(i < allDocIds.size() ? allDocIds.get(i) : null);
                 }
 
-                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds);
+                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds, providedImages);
                 for (int i = 0; i < kept.size() && i < fileNames.size(); i++) {
                     kept.get(i).setFileName(fileNames.get(i));
                 }
@@ -495,6 +567,7 @@ public class WorkOrderImportController {
             row.put("pickQty", p.getPickQty());             // 领料数量
             row.put("unit", p.getUnit());                   // 单位
             row.put("hasDocument", documentId != null);     // 是否带单据图片
+            row.put("dispimgId", documentId);               // 单据图 ID，供前端按需取图（变更-002）
             row.put("isUpdate", dbQty.containsKey(key));    // true=更新已有，false=新增
             // 单据号 + 物料编码 + 数量 三者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
             row.put("isDuplicate", dbQty.containsKey(key)
@@ -568,6 +641,7 @@ public class WorkOrderImportController {
             row.put("inboundQty", p.getInboundQty());       // 领料数量（入库数量）
             row.put("unit", p.getUnit());                   // 单位
             row.put("hasDocument", documentId != null);     // 是否带单据图片
+            row.put("dispimgId", documentId);               // 单据图 ID，供前端按需取图（变更-002）
             row.put("isUpdate", dbQty.containsKey(key));    // true=更新已有，false=新增
             // 单据号 + 物料编码 + 数量 三者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
             row.put("isDuplicate", dbQty.containsKey(key)
@@ -618,21 +692,36 @@ public class WorkOrderImportController {
      * 入参由调用方传入而不是从 payload 里取：调用方会先剔除重复行，只把需要上传的行传进来，
      * 这样重复导入时不会产生任何 MinIO 对象（全部行都跳过时连解压 xlsx 这一步都省了）。
      */
-    private List<String> resolveDocumentFileNames(byte[] sourceBytes, List<String> documentIds) {
-        if (documentIds == null || documentIds.isEmpty() || sourceBytes == null) {
+    /**
+     * 解析出每行应绑定的图片 fileName（与 documentIds 按下标对齐）。
+     *
+     * 取图优先级（变更-002）：
+     *   ① 前端传来的图（providedImages，key = dispimgId）—— 前端按 needImageIds 按需上传的
+     *   ② 回退：从缓存的原文件字节里提取 —— 前端没传、或前端未升级时走这条
+     *   ③ 都没有 -> null（该行无图，不阻断导入）
+     *
+     * @param providedImages 前端上传的图片，key 为 dispimgId；可为空 Map
+     */
+    private List<String> resolveDocumentFileNames(byte[] sourceBytes, List<String> documentIds,
+                                                  Map<String, byte[]> providedImages) {
+        if (documentIds == null || documentIds.isEmpty()) {
             return List.of();
         }
-
-        Map<String, WpsCellImageUtil.ExtractedImage> images = WpsCellImageUtil.extract(sourceBytes);
-        List<String> fileNames = new ArrayList<>();
-        if (images.isEmpty()) {
+        Map<String, byte[]> provided = providedImages == null ? Map.of() : providedImages;
+        boolean canFallback = sourceBytes != null;
+        if (provided.isEmpty() && !canFallback) {
+            List<String> none = new ArrayList<>();
             for (int i = 0; i < documentIds.size(); i++) {
-                fileNames.add(null);
+                none.add(null);
             }
-            return fileNames;
+            return none;
         }
 
-        Map<String, String> uploaded = new HashMap<>();   // DISPIMG ID -> 上传后的 fileName
+        // 懒加载：前端把图都给全了就不必解压原文件（重复导入时这里是 0 次解压）
+        Map<String, WpsCellImageUtil.ExtractedImage> images = null;
+        Map<String, String> uploaded = new LinkedHashMap<>();   // dispimgId -> 上传后的 fileName
+        List<String> fileNames = new ArrayList<>();
+
         for (String docId : documentIds) {
             if (docId == null) {
                 fileNames.add(null);
@@ -640,18 +729,25 @@ public class WorkOrderImportController {
             }
             String fileName = uploaded.get(docId);
             if (fileName == null) {
-                WpsCellImageUtil.ExtractedImage img = images.get(docId);
-                if (img == null) {
-                    fileNames.add(null);
-                    continue;
-                }
                 try {
-                    fileName = uploadImage(img);
-                    uploaded.put(docId, fileName);
+                    byte[] fromFrontend = provided.get(docId);
+                    if (fromFrontend != null) {
+                        fileName = uploadImage(
+                                new WpsCellImageUtil.ExtractedImage(fromFrontend, docId, "jpg"));
+                    } else if (canFallback) {
+                        if (images == null) {
+                            images = WpsCellImageUtil.extract(sourceBytes);
+                        }
+                        WpsCellImageUtil.ExtractedImage img = images.get(docId);
+                        if (img != null) {
+                            fileName = uploadImage(img);
+                        }
+                    }
                 } catch (Exception e) {
                     log.warn("单据图片上传失败, DISPIMG ID={}, 原因={}", docId, e.getMessage());
-                    fileNames.add(null);
-                    continue;
+                }
+                if (fileName != null) {
+                    uploaded.put(docId, fileName);
                 }
             }
             fileNames.add(fileName);
