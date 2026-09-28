@@ -2,8 +2,10 @@ package org.example.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.alibaba.excel.EasyExcel;
+import org.example.component.ImgUploader;
 import org.example.component.WorkOrderImportCache;
 import org.example.dto.ImgResult;
+import org.example.dto.ImportSaveOutcome;
 import org.example.dto.Result;
 import org.example.dto.UploadResult;
 import org.example.dto.WorkOrderExcelDTO;
@@ -18,6 +20,7 @@ import org.example.entity.ProductionInbound;
 import org.example.entity.WorkOrder;
 import org.example.feign.ImgFeignClient;
 import org.example.listener.WorkOrderImportExcelListener;
+import org.example.service.DocumentImportSaveService;
 import org.example.service.MaterialMovementService;
 import org.example.service.MaterialPickSummaryService;
 import org.example.service.ProductionInboundService;
@@ -56,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -90,6 +94,14 @@ public class WorkOrderImportController {
 
     @Autowired
     private MaterialPickSummaryService materialPickSummaryService;
+
+    /** 落库编排（去重 + 绑图 + upsert）与图片识别入口共用同一份实现 */
+    @Autowired
+    private DocumentImportSaveService documentImportSaveService;
+
+    /** 图片上传与图片识别确认入口共用 */
+    @Autowired
+    private ImgUploader imgUploader;
 
     @Autowired
     private ImgFeignClient imgFeignClient;
@@ -260,72 +272,25 @@ public class WorkOrderImportController {
                 data.put("addCount", save.getInsertCount());
                 data.put("updateCount", save.getUpdateCount());
             } else if (TYPE_PRODUCTION_INBOUND.equals(payload.getBillType())) {
-                // 先剔除「单据号 + 物料编码 + 数量」三者全同的重复行，再只为剩下的行上传图片。
-                // 图片上传必须先于 saveImported（fileName 要回填进去），所以判重只能放在这里 ——
-                // 不先过滤的话，重复导入会把内嵌图一遍遍重传到 MinIO。
-                List<ProductionInbound> all = payload.getInbounds();
-                List<String> allDocIds = payload.getDocumentIds() == null ? List.of() : payload.getDocumentIds();
-                Map<String, BigDecimal> dbQty = productionInboundService.findQtyByDocAndMaterial(
-                        all.stream().map(ProductionInbound::getDocumentNo)
-                                .filter(StringUtils::hasText).collect(Collectors.toSet()));
-
-                List<ProductionInbound> kept = new ArrayList<>();
-                List<String> keptDocIds = new ArrayList<>();
-                int skipCount = 0;
-                for (int i = 0; i < all.size(); i++) {
-                    ProductionInbound row = all.get(i);
-                    String key = DocMaterialKey.of(row.getDocumentNo(), row.getMaterialCode());
-                    if (dbQty.containsKey(key) && ImportDedupeUtil.isSameQty(dbQty.get(key), row.getInboundQty())) {
-                        skipCount++;
-                        continue;
-                    }
-                    kept.add(row);
-                    // documentIds 与实体列表按下标对齐，过滤时必须成对搬运，否则图片会串行
-                    keptDocIds.add(i < allDocIds.size() ? allDocIds.get(i) : null);
-                }
-
-                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds, providedImages);
-                for (int i = 0; i < kept.size() && i < fileNames.size(); i++) {
-                    kept.get(i).setFileName(fileNames.get(i));
-                }
-                WorkOrderImportSaveVO save = productionInboundService.saveImported(kept);
+                Set<String> uploaded = new HashSet<>();
+                ImportSaveOutcome outcome = documentImportSaveService.saveInbounds(payload.getInbounds(),
+                        excelImageProvider(payload.getSourceBytes(), payload.getDocumentIds(),
+                                providedImages, uploaded));
                 log.info("生产入库单导入保存完成, taskId={}, 新增={}, 更新={}, 跳过={}, 图片={}张",
-                        taskId, save.getInsertCount(), save.getUpdateCount(), skipCount, uploadedCount(fileNames));
-                data.put("addCount", save.getInsertCount());
-                data.put("updateCount", save.getUpdateCount());
-                data.put("skipCount", skipCount);
+                        taskId, outcome.insertCount(), outcome.updateCount(), outcome.skipCount(), uploaded.size());
+                data.put("addCount", outcome.insertCount());
+                data.put("updateCount", outcome.updateCount());
+                data.put("skipCount", outcome.skipCount());
             } else if (TYPE_PICK_SUMMARY.equals(payload.getBillType())) {
-                // 同上：领料汇总的重复判定同样用「单据号 + 物料编码 + 数量」三者全同
-                List<MaterialPickSummary> all = payload.getPickSummaries();
-                List<String> allDocIds = payload.getDocumentIds() == null ? List.of() : payload.getDocumentIds();
-                Map<String, BigDecimal> dbQty = materialPickSummaryService.findQtyByDocAndMaterial(
-                        all.stream().map(MaterialPickSummary::getDocumentNo)
-                                .filter(StringUtils::hasText).collect(Collectors.toSet()));
-
-                List<MaterialPickSummary> kept = new ArrayList<>();
-                List<String> keptDocIds = new ArrayList<>();
-                int skipCount = 0;
-                for (int i = 0; i < all.size(); i++) {
-                    MaterialPickSummary row = all.get(i);
-                    String key = DocMaterialKey.of(row.getDocumentNo(), row.getMaterialCode());
-                    if (dbQty.containsKey(key) && ImportDedupeUtil.isSameQty(dbQty.get(key), row.getPickQty())) {
-                        skipCount++;
-                        continue;
-                    }
-                    kept.add(row);
-                    keptDocIds.add(i < allDocIds.size() ? allDocIds.get(i) : null);
-                }
-
-                List<String> fileNames = resolveDocumentFileNames(payload.getSourceBytes(), keptDocIds, providedImages);
-                for (int i = 0; i < kept.size() && i < fileNames.size(); i++) {
-                    kept.get(i).setFileName(fileNames.get(i));
-                }
-                WorkOrderImportSaveVO save = materialPickSummaryService.saveImported(kept);
+                Set<String> uploaded = new HashSet<>();
+                ImportSaveOutcome outcome = documentImportSaveService.savePickSummaries(payload.getPickSummaries(),
+                        excelImageProvider(payload.getSourceBytes(), payload.getDocumentIds(),
+                                providedImages, uploaded));
                 log.info("领料汇总导入保存完成, taskId={}, 新增={}, 更新={}, 跳过={}, 图片={}张",
-                        taskId, save.getInsertCount(), save.getUpdateCount(), skipCount, uploadedCount(fileNames));
-                data.put("addCount", save.getInsertCount());
-                data.put("updateCount", save.getUpdateCount());
-                data.put("skipCount", skipCount);
+                        taskId, outcome.insertCount(), outcome.updateCount(), outcome.skipCount(), uploaded.size());
+                data.put("addCount", outcome.insertCount());
+                data.put("updateCount", outcome.updateCount());
+                data.put("skipCount", outcome.skipCount());
             } else {
                 WorkOrderImportSaveVO save = workOrderService.saveImported(payload.getWorkOrders());
                 log.info("工单导入保存完成, taskId={}, 新增={}, 更新={}", taskId, save.getInsertCount(), save.getUpdateCount());
@@ -686,95 +651,72 @@ public class WorkOrderImportController {
     // ================= 单据图片 =================
 
     /**
-     * 提取 xlsx 内嵌单据图片并上传 MinIO，返回与 documentIds 对齐的 fileName 列表。
-     * 同一张图被多行引用时只上传一次。
-     *
-     * 入参由调用方传入而不是从 payload 里取：调用方会先剔除重复行，只把需要上传的行传进来，
-     * 这样重复导入时不会产生任何 MinIO 对象（全部行都跳过时连解压 xlsx 这一步都省了）。
-     */
-    /**
-     * 解析出每行应绑定的图片 fileName（与 documentIds 按下标对齐）。
+     * Excel 导入的行图片提供者：按该行的 DISPIMG ID 取图并上传。
      *
      * 取图优先级（变更-002）：
      *   ① 前端传来的图（providedImages，key = dispimgId）—— 前端按 needImageIds 按需上传的
      *   ② 回退：从缓存的原文件字节里提取 —— 前端没传、或前端未升级时走这条
      *   ③ 都没有 -> null（该行无图，不阻断导入）
      *
-     * @param providedImages 前端上传的图片，key 为 dispimgId；可为空 Map
+     * 提供者做成「按需回调」而非「先算好一个完整数组」，是为了保住变更-002 的两处懒加载：
+     *   · 同一 dispimgId 只上传一次（多行共用一张图时）
+     *   · sourceBytes 仅在真正需要回退提取时才解压（图都从传来、或全部行都被跳过时，一次都不解）
+     * 落库服务只会对「确定要写入的行」回调，重复行不会触发上传。
+     *
+     * @param uploadedFileNames 出参：收集成功上传的 fileName，供调用方记录日志
      */
-    private List<String> resolveDocumentFileNames(byte[] sourceBytes, List<String> documentIds,
-                                                  Map<String, byte[]> providedImages) {
-        if (documentIds == null || documentIds.isEmpty()) {
-            return List.of();
-        }
+    private DocumentImportSaveService.RowImageProvider excelImageProvider(
+            byte[] sourceBytes, List<String> documentIds, Map<String, byte[]> providedImages,
+            Set<String> uploadedFileNames) {
+
+        List<String> docIds = documentIds == null ? List.of() : documentIds;
         Map<String, byte[]> provided = providedImages == null ? Map.of() : providedImages;
         boolean canFallback = sourceBytes != null;
-        if (provided.isEmpty() && !canFallback) {
-            List<String> none = new ArrayList<>();
-            for (int i = 0; i < documentIds.size(); i++) {
-                none.add(null);
-            }
-            return none;
-        }
 
-        // 懒加载：前端把图都给全了就不必解压原文件（重复导入时这里是 0 次解压）
-        Map<String, WpsCellImageUtil.ExtractedImage> images = null;
         Map<String, String> uploaded = new LinkedHashMap<>();   // dispimgId -> 上传后的 fileName
-        List<String> fileNames = new ArrayList<>();
+        AtomicReference<Map<String, WpsCellImageUtil.ExtractedImage>> extracted = new AtomicReference<>();
 
-        for (String docId : documentIds) {
+        return index -> {
+            String docId = index < docIds.size() ? docIds.get(index) : null;
             if (docId == null) {
-                fileNames.add(null);
-                continue;
+                return null;
             }
-            String fileName = uploaded.get(docId);
-            if (fileName == null) {
-                try {
-                    byte[] fromFrontend = provided.get(docId);
-                    if (fromFrontend != null) {
-                        fileName = uploadImage(
-                                new WpsCellImageUtil.ExtractedImage(fromFrontend, docId, "jpg"));
-                    } else if (canFallback) {
-                        if (images == null) {
-                            images = WpsCellImageUtil.extract(sourceBytes);
-                        }
-                        WpsCellImageUtil.ExtractedImage img = images.get(docId);
-                        if (img != null) {
-                            fileName = uploadImage(img);
-                        }
-                    }
-                } catch (Exception e) {
-                    log.warn("单据图片上传失败, DISPIMG ID={}, 原因={}", docId, e.getMessage());
-                }
-                if (fileName != null) {
-                    uploaded.put(docId, fileName);
-                }
+            String cached = uploaded.get(docId);
+            if (cached != null) {
+                return cached;
             }
-            fileNames.add(fileName);
-        }
-        return fileNames;
-    }
 
-    /** 统计成功上传的唯一图片数 */
-    private int uploadedCount(List<String> fileNames) {
-        return (int) fileNames.stream().filter(java.util.Objects::nonNull).distinct().count();
+            String fileName = null;
+            try {
+                byte[] fromFrontend = provided.get(docId);
+                if (fromFrontend != null) {
+                    fileName = uploadImage(
+                            new WpsCellImageUtil.ExtractedImage(fromFrontend, docId, "jpg"));
+                } else if (canFallback) {
+                    if (extracted.get() == null) {
+                        extracted.set(WpsCellImageUtil.extract(sourceBytes));
+                    }
+                    WpsCellImageUtil.ExtractedImage img = extracted.get().get(docId);
+                    if (img != null) {
+                        fileName = uploadImage(img);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("单据图片上传失败, DISPIMG ID={}, 原因={}", docId, e.getMessage());
+            }
+
+            // 只缓存成功的结果：失败时下一行若引用同一张图会再试一次（与重构前一致）
+            if (fileName != null) {
+                uploaded.put(docId, fileName);
+                uploadedFileNames.add(fileName);
+            }
+            return fileName;
+        };
     }
 
     /** 上传单张内嵌图片到 img-service */
     private String uploadImage(WpsCellImageUtil.ExtractedImage img) {
-        // img-service 只接受 jpg/png，jpeg 统一按 jpg 提交（格式相同）
-        String ext = "png".equalsIgnoreCase(img.getExtension()) ? "png" : "jpg";
-        String contentType = "png".equals(ext) ? "image/png" : "image/jpeg";
-        String base = StringUtils.hasText(img.getOriginalName()) ? img.getOriginalName() : "document";
-        // 去掉原始名里可能带的后缀，统一追加白名单后缀
-        base = base.replaceAll("[\\\\/:*?\"<>|]", "_").replaceAll("\\.[A-Za-z0-9]+$", "");
-
-        MultipartFile file = new InMemoryMultipartFile("file", base + "." + ext, contentType, img.getData());
-        ImgResult<UploadResult> res = imgFeignClient.upload(file);
-        if (res == null || res.getCode() != 200 || res.getData() == null) {
-            throw new IllegalStateException("img-service 返回异常");
-        }
-        return res.getData().getFileName();
+        return imgUploader.upload(img);
     }
 
     // EasyExcel 底层异常会层层包装，取最里层 cause 才是真正原因
