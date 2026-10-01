@@ -10,7 +10,9 @@ import org.example.util.MaterialMatcher;
 import org.example.util.MaterialNameNormalizer;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -67,6 +69,39 @@ public class MaterialMasterServiceImpl extends ServiceImpl<MaterialMasterMapper,
     /** 停用的行保留在库里但不再参与匹配（便于排查「为什么这条查不到」） */
     private List<MaterialMaster> listEnabled() {
         return lambdaQuery().eq(MaterialMaster::getEnabled, 1).list();
+    }
+
+    @Override
+    public Map<String, MaterialMaster> mapFirstByCode() {
+        Map<String, MaterialMaster> byCode = new HashMap<>();
+        // 全量取回（表仅数百行）：与 match/search 同一套思路 —— 不在 SQL 里做归一化/取舍，
+        // 规则只留一份 Java 实现
+        for (MaterialMaster material : baseMapper.selectList(null)) {
+            String code = material.getMaterialCode();
+            if (code == null || code.isBlank()) {
+                continue;
+            }
+            MaterialMaster exist = byCode.get(code);
+            if (exist == null || prefer(material, exist)) {
+                byCode.put(code, material);
+            }
+        }
+        return byCode;
+    }
+
+    /** 同一编码多个名称时取哪条：先看启用，再比 id（取小的）—— 只为确定性 */
+    private boolean prefer(MaterialMaster candidate, MaterialMaster current) {
+        boolean candidateEnabled = isEnabled(candidate);
+        if (candidateEnabled != isEnabled(current)) {
+            return candidateEnabled;
+        }
+        Long candidateId = candidate.getId();
+        Long currentId = current.getId();
+        return candidateId != null && (currentId == null || candidateId < currentId);
+    }
+
+    private boolean isEnabled(MaterialMaster material) {
+        return material.getEnabled() != null && material.getEnabled() == 1;
     }
 
     private MaterialVO toVO(MaterialMaster material) {

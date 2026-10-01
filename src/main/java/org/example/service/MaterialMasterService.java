@@ -2,8 +2,10 @@ package org.example.service;
 
 import org.example.dto.MaterialMatchVO;
 import org.example.dto.MaterialVO;
+import org.example.entity.MaterialMaster;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 物料主数据查询（图片解析辅助录入用）。
@@ -29,4 +31,17 @@ public interface MaterialMasterService {
      * @param limit   返回条数上限；null 或非正数时取默认值
      */
     List<MaterialVO> search(String keyword, Integer limit);
+
+    /**
+     * 按物料编码取主数据（页面「物料查询」按编码联查名称与规格用）。
+     *
+     * <p>同一编码在主数据里可能对应多个名称（唯一键是「编码 + 名称」，源数据里有一对多），
+     * 这种只取一条：优先 enabled=1，其次 id 最小的 —— 只求和「确定性」，
+     * 页面上只需要一个能看的名字。
+     *
+     * <p>与 {@link #match} / {@link #search} 不同，这里**不过滤停用行**：
+     * 停用的物料仍然存在于主数据里，页面按编码查到时该显示它的名字，
+     * 显示成「没有这个物料」会让人以为主数据缺了它。
+     */
+    Map<String, MaterialMaster> mapFirstByCode();
 }

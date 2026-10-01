@@ -3,7 +3,13 @@
 -- 数据库：MySQL 8.0+（使用了 utf8mb4_0900_ai_ci 排序规则）
 --
 -- 用法：
---   mysql -h127.0.0.1 -uroot -p < docs/schema.sql
+--   mysql -h127.0.0.1 -uroot -p --default-character-set=utf8mb4 < docs/schema.sql
+--
+-- ⚠️ **`--default-character-set=utf8mb4` 不能省**：客户端不指定时按本机默认编码
+--    （Windows 中文环境下是 GBK）连库，中文**注释**会被写坏 —— 表/列注释变成
+--    「鐗╂枡搴撳瓨姹囨?」，而数据本身没问题（写入走 JDBC，charset 是对的）。
+--    症状很容易误判成「库编码错了」，其实是建表那一次连接的编码问题。
+--    已经建坏了不用重建表，用同样的命令重放一遍 ALTER ... COMMENT 即可（见文末备注）。
 --
 -- 可重复执行：第 1、2 部分均为幂等写法（IF NOT EXISTS / NOT EXISTS 判重），
 --            重复执行不会报错、不会产生重复数据。
@@ -153,6 +159,40 @@ CREATE TABLE IF NOT EXISTS `material_pick_summary` (
 
 
 -- ---------------------------------------------------------------------------
+-- 物料库存汇总（Excel「库存汇总」导入，页面「物料查询」用）
+--
+-- 业务唯一键：(plant_code + material_code + storage_location)。
+--   源文件里同一物料常有多行（硅粉 111001785 会出现 6,000 / 9,482 / 34,000 三行，
+--   其它列完全相同），导入时按这个键把 stock_qty **相加**存成一条。
+--
+-- 再次导入 = 当前库存快照：先把本次涉及工厂的 stock_qty 清零（**行保留**，
+--   物料信息以后还查得到），再 upsert 本次的行。见 MaterialStockServiceImpl#saveImported。
+--
+-- ⚠️ plant_code / storage_location 用 NOT NULL DEFAULT '' 而不是可空 ——
+--    MySQL 唯一索引不约束 NULL，列可空时同键能插进多条，唯一键形同虚设
+--    （tank_level_record 那张表记过同一条教训）。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `material_stock` (
+  `id`               bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `plant_code`       varchar(8)    NOT NULL DEFAULT '' COMMENT '工厂，如 1503',
+  `material_code`    varchar(32)   NOT NULL DEFAULT '' COMMENT '物料，如 111001785',
+  `material_desc`    varchar(128)  DEFAULT NULL COMMENT '物料描述，如 硅粉',
+  `spec`             varchar(255)  DEFAULT NULL COMMENT '规格型号，如 500KG/袋',
+  `storage_location` varchar(16)   NOT NULL DEFAULT '' COMMENT '存储地点，如 1001',
+  `storage_desc`     varchar(64)   DEFAULT NULL COMMENT '存储地点描述，如 原材料仓',
+  `unit`             varchar(16)   DEFAULT NULL COMMENT '基本计量单位，如 KG',
+  `stock_qty`        decimal(18,3) NOT NULL DEFAULT 0 COMMENT '非限制使用的库存（同键多行相加）',
+  `last_import_time` datetime      DEFAULT NULL COMMENT '最近一次被导入的时间',
+  `create_time`      datetime      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time`      datetime      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_plant_material_location` (`plant_code`,`material_code`,`storage_location`),
+  KEY `idx_material_code` (`material_code`),
+  KEY `idx_material_desc` (`material_desc`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='物料库存汇总（SAP 库存导出）';
+
+
+-- ---------------------------------------------------------------------------
 -- 物料领料单（旧版：单据 + 附件，对应 MaterialPickService，目前已不在用）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `material_pick` (
@@ -247,12 +287,13 @@ CREATE TABLE IF NOT EXISTS `material_master` (
 -- ---------------------------------------------------------------------------
 -- 月底车间各储罐液位记录
 --
--- 每月月底下午 2 点抄录车间各储罐（产品 / 原料）的液位，
+-- 每月月底下午 3 点抄录车间各储罐（产品 / 原料）的液位，
 -- 「理论质量」由液位换算得出，与实测重量存在差异，以实际测量为准
 -- （该说明同时展示在页面对应 Tab 的表格下方）。
 --
--- 「图据」（现场照片）只存**文件名**，对外访问路径由后端拼 /files、/thumbs
--- —— 与领料汇总、生产入库的图片约定一致（《前后端改动统筹》契约 2.3），
+-- 「图据」（现场照片）存在**子表 tank_level_image** 里（一条记录可多张），
+-- 子表只存**文件名**，对外访问路径由后端拼 /files、/thumbs
+-- —— 与工单图片、领料汇总、生产入库的图片约定一致（《前后端改动统筹》契约 2.3），
 -- 前端拿到的始终是相对路径，同源部署无需改配置。
 --
 -- 唯一键 (记录日期 + 容器编号)：同一时点、同一容器只应有一条记录（变更-004-1）。
@@ -263,7 +304,7 @@ CREATE TABLE IF NOT EXISTS `material_master` (
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `tank_level_record` (
   `id`                 bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-  `record_date`        date          NOT NULL COMMENT '记录日期（每月月底下午2点抄录）',
+  `record_date`        date          NOT NULL COMMENT '记录日期（每月月底下午3点抄录）',
   `location`           varchar(32)   NOT NULL DEFAULT '' COMMENT '属地（车间/区域）',
   `category`           varchar(8)    DEFAULT NULL COMMENT '所属：产品 / 原料',
   `material_code`      varchar(32)   DEFAULT NULL COMMENT '物料编码（关联物料主数据，可空）',
@@ -272,7 +313,6 @@ CREATE TABLE IF NOT EXISTS `tank_level_record` (
   `tank_code`          varchar(64)   NOT NULL DEFAULT '' COMMENT '容器编号（设备位号，与记录日期联合唯一）',
   `level_value`        decimal(18,4) DEFAULT NULL COMMENT '容器液位',
   `theoretical_weight` decimal(18,4) DEFAULT NULL COMMENT '理论质量(KG)',
-  `file_name`          varchar(255)  DEFAULT NULL COMMENT '图据（现场照片文件名，经 img-service 访问）',
   `create_time`        datetime      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time`        datetime      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
@@ -301,6 +341,31 @@ CREATE TABLE IF NOT EXISTS `tank_level_record` (
 
 
 -- ---------------------------------------------------------------------------
+-- 月底储罐液位记录图据（一条记录可多张，变更-011）
+--
+-- 与 work_order_image 同一套模式（子表 + file_name + 按归属查），两处差异有理由：
+--
+--   · 关联键用自增 record_id 而不是业务键：工单挂 order_no（业务键，永不变），
+--     液位记录的业务键是 (record_date, tank_code) —— 而这两个字段正是用户会在
+--     页面上编辑的，挂业务键的话每改一次日期/编号都要级联改图片表。
+--
+--   · file_name 用 varchar(255) 而不是 128：与 tank_level_record 原来的
+--     file_name 列保持一致（那一列已由本表取代）。
+--
+-- 不建外键：与全库既有约定一致（work_order_image 也没有）。
+-- 代价是删记录时必须由 Service 主动清图片，否则留下孤儿行 + MinIO 孤儿文件。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `tank_level_image` (
+  `id`          bigint       NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `record_id`   bigint       NOT NULL COMMENT '所属液位记录 id（tank_level_record.id）',
+  `file_name`   varchar(255) NOT NULL COMMENT 'MinIO 文件名（经 img-service 访问）',
+  `create_time` datetime     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_record_id` (`record_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='月底储罐液位记录图据表';
+
+
+-- ---------------------------------------------------------------------------
 -- 设备台账（静设备）
 --
 -- 来源：线下《设备台账（静设备）2025.06》各页 + 《容器封头参数表 2025.06》
@@ -320,6 +385,13 @@ CREATE TABLE IF NOT EXISTS `tank_level_record` (
 --   故唯一键取「来源工作表 + 行号」作**导入幂等键**（重复执行本文件不会翻倍），
 --   检索走 idx_equipment_code / idx_equipment_name。手工新增的行请同样写明来源
 --   （工作表填 'manual'，行号取同工作表最大值 +1），否则重复导入会多出一行。
+--
+-- 容器类型（container_type）：
+--   按 spec 派生 —— 含「卧式」为 1、含「平底」为 2、都不含为 3。
+--   源台账把容器型式写在规格后面的括号里（「DN1000x3400（卧式）」「Φ800x1100（平底）」），
+--   但业务要按型式分桶时不能让调用方各写一遍字符串匹配，故落成整型列。
+--   判定规则与回填语句见第 2 部分（幂等，每次执行本文件按 spec 重算全表）。
+--   暂不建索引：全表 91 行（将来几百行），低基数列上索引帮不上优化器。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `equipment_ledger` (
   `id`              bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -327,6 +399,7 @@ CREATE TABLE IF NOT EXISTS `equipment_ledger` (
   `equipment_name`  varchar(128)  NOT NULL COMMENT '设备名称（如 三甲粗品罐）',
   `workshop`        varchar(32)   NOT NULL DEFAULT '' COMMENT '车间/装置（一车间/三甲车间/四甲车间/罐区/公用工程）',
   `spec`            varchar(128)  DEFAULT NULL COMMENT '设备规格（公称直径×筒体长度，如 DN1600x2000）',
+  `container_type`  tinyint       NOT NULL DEFAULT 3 COMMENT '容器类型 1卧式 2平底 3其他（由 spec 判定：含「卧式」→1，含「平底」→2，都不含→3）',
   `thickness`       varchar(32)   DEFAULT NULL COMMENT '筒体厚度(mm)，源台账有 8mm/10mm 这类多段写法',
   `volume`          decimal(18,4) DEFAULT NULL COMMENT '容积(m3)，源台账 V= 前缀',
   `heat_area`       decimal(18,4) DEFAULT NULL COMMENT '换热面积(m2)，源台账 F= 前缀（与容积互斥）',
@@ -348,7 +421,7 @@ CREATE TABLE IF NOT EXISTS `equipment_ledger` (
   KEY `idx_equipment_code` (`equipment_code`),
   KEY `idx_equipment_name` (`equipment_name`),
   KEY `idx_workshop` (`workshop`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='设备台账（静设备：位号/名称/规格/封头容积/每mm液位对应量）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='设备台账（静设备：位号/名称/规格/容器类型/封头容积/每mm液位对应量）';
 
 
 -- =============================================================================
@@ -378,9 +451,14 @@ ON DUPLICATE KEY UPDATE
 --   work_order:image:delete  删除工单图片    goods_move:view          查看货物移动
 --   goods_move:import        导入货物移动    pick:view                查看领料汇总
 --   inbound:view             查看生产入库
+--   tank_level:edit          维护储罐液位记录（新增/编辑，含图据上传删除）
+--   tank_level:delete        删除储罐液位记录
 --
 -- 说明：查询类接口后端已放开免登录，*:view 主要供前端做按钮显隐；
 --      后端实际强制校验的是写操作权限（edit/import/upload/delete）。
+--
+-- tank_level:* 只授给 admin：储罐液位是月度台账的原始记录，改错会直接影响
+-- 后面按液位算出的量，本期先收在管理员手里，待录入流程稳定后再考虑下放给班组长。
 -- ---------------------------------------------------------------------------
 INSERT INTO `sys_role_permission` (`role_id`, `permission_key`)
 SELECT r.`id`, x.`perm`
@@ -398,6 +476,8 @@ JOIN (
   SELECT 'admin', 'goods_move:import'             UNION ALL
   SELECT 'admin', 'pick:view'                     UNION ALL
   SELECT 'admin', 'inbound:view'                  UNION ALL
+  SELECT 'admin', 'tank_level:edit'               UNION ALL
+  SELECT 'admin', 'tank_level:delete'             UNION ALL
   -- team_leader：除「删除工单」外
   SELECT 'team_leader', 'work_order:view'         UNION ALL
   SELECT 'team_leader', 'work_order:add'          UNION ALL
@@ -863,6 +943,37 @@ ON DUPLICATE KEY UPDATE
   --            enabled（手工停用的行不能被重新启用）
 
 
+-- ---------------------------------------------------------------------------
+-- 容器类型回填
+--
+-- 规则：`spec` 含「卧式」→ 1；含「平底」→ 2；都不含 → 3。
+--
+-- 为什么在导入之后单独跑一条 UPDATE，而不是写进上面的 VALUES：
+--   它是**纯派生列**（只由 spec 决定），用一条语句算全表，比在 91 行 VALUES 里
+--   手抄 91 个数字可靠 —— 手抄的那份迟早会和 spec 不一致，且将来追加的
+--   「另 6 页设备台账」不必再逐行判定。
+--
+-- 与上面「有意不更新」的几列不是一回事：density / mass_per_mm 是业务侧补的**输入**，
+-- 重复导入不能冲掉；container_type 是**输出**，每次执行本文件都按 spec 重算
+-- （含手工新增的行）。若某行需要与 spec 不符的容器类型，正确做法是改 spec，不是改本列。
+--
+-- 几个判定细节：
+--   · 顺序固定「先卧式后平底」。两种写法在源台账里互斥（都写在规格的括号里），
+--     当前 91 行无一同时含两词，顺序只是给将来留一个确定答案。
+--   · spec 为 NULL / 空串 → 落 3（「都不包含」的自然结果），不猜成 1 或 2。
+--   · LIKE 的 % 只加在词两侧，不锚定括号 —— 源台账里这两种写法既有全角括号
+--     「（卧式）」也有别的形态，锚定括号会漏判。
+--
+-- 实测分布（91 行）：卧式 8 / 平底 10 / 其他 73。
+-- ---------------------------------------------------------------------------
+UPDATE `equipment_ledger`
+SET `container_type` = CASE
+      WHEN `spec` LIKE '%卧式%' THEN 1
+      WHEN `spec` LIKE '%平底%' THEN 2
+      ELSE 3
+    END;
+
+
 -- =============================================================================
 -- 第 3 部分：老库升级脚本（默认注释，仅在既有旧库上升级时按需执行）
 --
@@ -943,3 +1054,53 @@ ON DUPLICATE KEY UPDATE
 -- --        `mass_per_mm` = `volume_per_mm` * 0.792 * 1000
 -- --   WHERE `equipment_name` IN ('甲醇储罐A', '甲醇储罐B');
 
+-- -- 12) 设备台账：新增容器类型列（变更-006）
+-- --     全新库跑完第 1 部分就有了，本节只给「变更-005 之后已建表」的旧库升级用。
+-- --     DEFAULT 3 让既有行先落到「其他」，紧接着的回填语句再按 spec 逐行纠正。
+-- ALTER TABLE `equipment_ledger`
+--   ADD COLUMN `container_type` tinyint NOT NULL DEFAULT 3
+--     COMMENT '容器类型 1卧式 2平底 3其他（由 spec 判定：含「卧式」→1，含「平底」→2，都不含→3）'
+--   AFTER `spec`;
+-- -- 回填（与第 2 部分同一段逻辑；重复执行无副作用）
+-- UPDATE `equipment_ledger`
+-- SET `container_type` = CASE
+--       WHEN `spec` LIKE '%卧式%' THEN 1
+--       WHEN `spec` LIKE '%平底%' THEN 2
+--       ELSE 3
+--     END;
+
+-- -- 13) 储罐液位记录：同步「抄录时间」的列注释（变更-007 的收尾）
+-- --     变更-007 把页面上「每月月底下午 2 点」改成 3 点（线下台账口径本就是 3 点），
+-- --     但漏了库里这条列注释。注释不影响读写，只影响看表结构的人 ——
+-- --     不补的话，下次对账又会有人照着「2 点」去核。
+-- ALTER TABLE `tank_level_record`
+--   MODIFY COLUMN `record_date` date NOT NULL COMMENT '记录日期（每月月底下午3点抄录）';
+
+-- -- 14) 中文注释被写坏时怎么修（2026-10-01 实际踩过）
+-- --     现象：表/列注释显示成「鐗╂枡搴撳瓨姹囨?」，但**数据是好的**（中文数据正常显示）。
+-- --     原因：建表那一次 mysql 客户端没带 --default-character-set=utf8mb4，
+-- --           按本机默认编码（中文 Windows 下是 GBK）连库，注释在写进数据字典那一刻就被解错；
+-- --           数据没事是因为它走 JDBC 写入，charset 一直是对的。
+-- --     修法：**不用重建表、不用重导数据**，带正确编码重放一遍注释即可（以 material_stock 为例）：
+-- ALTER TABLE `material_stock` COMMENT = '物料库存汇总（SAP 库存导出）';
+-- ALTER TABLE `material_stock`
+--   MODIFY COLUMN `plant_code` varchar(8) NOT NULL DEFAULT '' COMMENT '工厂，如 1503';
+-- -- ……其余列同理，列定义直接抄本文件第 1 部分的建表语句（MODIFY COLUMN 要求写全类型/可空/默认值）。
+
+-- -- 15) 储罐液位图据改为子表（变更-011）
+-- --     变更-008 时图据是 tank_level_record.file_name 单列（一条记录一张）；
+-- --     改为多张后由 tank_level_image 承载。三步，**顺序不能反**：
+-- --
+-- --     ① 建子表（语句见第 1 部分，全新库跑完第 1 部分就有了）
+-- CREATE TABLE IF NOT EXISTS `tank_level_image` ( ... );
+-- --
+-- --     ② 把原有的单张图搬进子表（本来就没图的行不会被选出来，重复执行只会
+-- --        再插一遍相同数据 —— 所以**这步只跑一次**，跑完确认行数再进第③步）
+-- INSERT INTO `tank_level_image` (`record_id`, `file_name`)
+-- SELECT `id`, `file_name` FROM `tank_level_record`
+-- WHERE `file_name` IS NOT NULL AND `file_name` <> '';
+-- --
+-- --     ③ 核对第②步的插入行数 = 原表里有图据的行数，确认后再删列
+-- --        （删列前先 `SELECT id, file_name FROM tank_level_record WHERE file_name <> ''`
+-- --          留个底，这一步不可逆）
+-- ALTER TABLE `tank_level_record` DROP COLUMN `file_name`;

@@ -16,6 +16,7 @@ import org.example.dto.WorkOrderImportSaveDTO;
 import org.example.dto.WorkOrderImportSaveVO;
 import org.example.entity.MaterialMovement;
 import org.example.entity.MaterialPickSummary;
+import org.example.entity.MaterialStock;
 import org.example.entity.ProductionInbound;
 import org.example.entity.WorkOrder;
 import org.example.feign.ImgFeignClient;
@@ -23,6 +24,7 @@ import org.example.listener.WorkOrderImportExcelListener;
 import org.example.service.DocumentImportSaveService;
 import org.example.service.MaterialMovementService;
 import org.example.service.MaterialPickSummaryService;
+import org.example.service.MaterialStockService;
 import org.example.service.ProductionInboundService;
 import org.example.service.WorkOrderService;
 import org.example.util.ExcelCleanUtil;
@@ -31,6 +33,7 @@ import org.example.util.GoodsMoveImportUtil;
 import org.example.util.ImportDedupeUtil;
 import org.example.util.InMemoryMultipartFile;
 import org.example.util.MaterialPickSummaryImportUtil;
+import org.example.util.MaterialStockImportUtil;
 import org.example.util.ProductionInboundImportUtil;
 import org.example.util.WorkOrderImportUtil;
 import org.example.util.WpsCellImageUtil;
@@ -79,6 +82,7 @@ public class WorkOrderImportController {
     private static final String TYPE_GOODS_MOVE = "货物移动";
     private static final String TYPE_PRODUCTION_INBOUND = "生产入库单";
     private static final String TYPE_PICK_SUMMARY = "领料汇总";
+    private static final String TYPE_STOCK_SUMMARY = "库存汇总";
 
     @Autowired
     private WorkOrderImportCache importCache;
@@ -94,6 +98,10 @@ public class WorkOrderImportController {
 
     @Autowired
     private MaterialPickSummaryService materialPickSummaryService;
+
+    /** 库存汇总导入（页面「物料查询」的数据来源） */
+    @Autowired
+    private MaterialStockService materialStockService;
 
     /** 落库编排（去重 + 绑图 + upsert）与图片识别入口共用同一份实现 */
     @Autowired
@@ -144,6 +152,10 @@ public class WorkOrderImportController {
             List<MaterialMovement> validList = new ArrayList<>();
             rows = buildGoodsMoveRows(dtoList, validList, errorRows);
             payload = WorkOrderImportPayload.ofMovements(billType, validList);
+        } else if (TYPE_STOCK_SUMMARY.equals(billType)) {
+            List<MaterialStock> validList = new ArrayList<>();
+            rows = buildStockRows(dtoList, validList, errorRows);
+            payload = WorkOrderImportPayload.ofStocks(billType, validList);
         } else if (TYPE_PRODUCTION_INBOUND.equals(billType)) {
             List<ProductionInbound> validList = new ArrayList<>();
             List<String> documentIds = new ArrayList<>();
@@ -291,6 +303,13 @@ public class WorkOrderImportController {
                 data.put("addCount", outcome.insertCount());
                 data.put("updateCount", outcome.updateCount());
                 data.put("skipCount", outcome.skipCount());
+            } else if (TYPE_STOCK_SUMMARY.equals(payload.getBillType())) {
+                ImportSaveOutcome outcome = materialStockService.saveImported(payload.getStocks());
+                log.info("库存汇总导入保存完成, taskId={}, 新增={}, 更新={}",
+                        taskId, outcome.insertCount(), outcome.updateCount());
+                data.put("addCount", outcome.insertCount());
+                data.put("updateCount", outcome.updateCount());
+                data.put("skipCount", outcome.skipCount());
             } else {
                 WorkOrderImportSaveVO save = workOrderService.saveImported(payload.getWorkOrders());
                 log.info("工单导入保存完成, taskId={}, 新增={}, 更新={}", taskId, save.getInsertCount(), save.getUpdateCount());
@@ -369,6 +388,11 @@ public class WorkOrderImportController {
         if (byCode != null) {
             return byCode;
         }
+        // 库存汇总（SAP 库存导出）必须最先判：它同样有「物料」「物料描述」列，
+        // 放到下面「领料数量 / 单据」那条之后就会被当成入库/领料单
+        if (headers.contains("非限制使用的库存")) {
+            return TYPE_STOCK_SUMMARY;
+        }
         if (headers.contains("移动类型")) {
             return TYPE_GOODS_MOVE;
         }
@@ -397,6 +421,7 @@ public class WorkOrderImportController {
             case "goods_move": return TYPE_GOODS_MOVE;
             case "production_inbound": return TYPE_PRODUCTION_INBOUND;
             case "material_pick_summary": return TYPE_PICK_SUMMARY;
+            case "stock_summary": return TYPE_STOCK_SUMMARY;
             default: return null;
         }
     }
@@ -540,6 +565,67 @@ public class WorkOrderImportController {
             rows.add(row);
         }
         return rows;
+    }
+
+    /**
+     * 库存汇总（SAP 库存导出）：
+     * 工厂 / 物料 / 物料描述 / 规格型号 / 存储地点 / 基本计量单位 / 非限制使用的库存 / 存储地点描述。
+     *
+     * <p>与其它类型最大的不同：**文件内同键多行是正常形态**（同一物料有多条库存行），
+     * 不判重复也不报错，直接按 (工厂+物料编码+存储地点) 相加成一条。
+     * 所以预览里看到的行就是最终会入库的行，所见即所得。
+     */
+    private List<Map<String, Object>> buildStockRows(List<WorkOrderExcelDTO> dtoList,
+                                                     List<MaterialStock> validList,
+                                                     List<WorkOrderImportResultVO.RowError> errorRows) {
+        Map<String, MaterialStock> merged = new LinkedHashMap<>();
+        int rowNum = 0;
+        for (WorkOrderExcelDTO dto : dtoList) {
+            rowNum++;
+            MaterialStock s = MaterialStockImportUtil.toEntity(dto);
+            String err = MaterialStockImportUtil.validate(s);
+            if (err != null) {
+                errorRows.add(new WorkOrderImportResultVO.RowError(rowNum, "第" + rowNum + "行：" + err));
+                continue;
+            }
+            String key = StockKey.of(s);
+            MaterialStock exists = merged.get(key);
+            if (exists == null) {
+                merged.put(key, s);
+            } else {
+                exists.setStockQty(exists.getStockQty().add(s.getStockQty()));
+            }
+        }
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (MaterialStock s : merged.values()) {
+            validList.add(s);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("plantCode", s.getPlantCode());              // 工厂
+            row.put("materialCode", s.getMaterialCode());        // 物料
+            row.put("materialDesc", s.getMaterialDesc());        // 物料描述
+            row.put("spec", s.getSpec());                        // 规格型号
+            row.put("storageLocation", s.getStorageLocation());  // 存储地点
+            row.put("unit", s.getUnit());                        // 基本计量单位
+            row.put("stockQty", s.getStockQty());                // 非限制使用的库存（已相加）
+            row.put("storageDesc", s.getStorageDesc());          // 存储地点描述
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /** 库存行的组合键：工厂 + 物料编码 + 存储地点（与表上的唯一键一致） */
+    private static final class StockKey {
+        private StockKey() {
+        }
+
+        static String of(MaterialStock s) {
+            return nvl(s.getPlantCode()) + '|' + nvl(s.getMaterialCode()) + '|' + nvl(s.getStorageLocation());
+        }
+
+        private static String nvl(String v) {
+            return v == null ? "" : v.trim();
+        }
     }
 
     /**
