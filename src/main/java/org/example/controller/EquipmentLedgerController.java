@@ -12,11 +12,13 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 设备台账查询（备用接口，只读）。
+ * 设备台账查询（只读）。
  *
  * <p>典型用法：输入「三甲」→ 返回设备名称/位号/规格/车间里含「三甲」的设备及其参数
  * （位号、规格、容积或换热面积、封头容积、每 mm 液位对应体积与质量）。
- * 目前没有前端入口，属于「先备着」的能力；将来接页面时按列表页约定做本地分页即可。
+ *
+ * <p>现已有前端入口：月底储罐液位记录录入时的「容器名称」候选 —— 那边点开下拉就调本接口
+ * （空关键字取「全部候选」，见下方 {@code keyword} 说明），所以**不能**再把空关键字当无意义输入拒掉。
  *
  * <p>查询类接口，免登录 —— 与 /api/pick/list、/api/inbound/list 的既有约定一致
  * （本工程用注解式鉴权，未加 @SaCheck* 即为放行）。本次没有任何写接口，
@@ -30,9 +32,10 @@ public class EquipmentLedgerController {
     private EquipmentLedgerService equipmentLedgerService;
 
     /**
-     * 按关键字模糊检索设备台账。
+     * 按关键字模糊检索设备台账；结果按设备名称**拼音顺序**（首字母）返回。
      *
-     * @param keyword  关键字，匹配位号/名称/规格/车间；留空返回空列表
+     * @param keyword  关键字，匹配位号/名称/规格/车间；**留空返回前 limit 条**
+     *                 （即「全部候选」，供下拉框点开即列出），变更-012 起如此
      * @param workshop 车间，可选，精确匹配
      * @param limit    条数上限，可选，默认 20、最多 100
      */

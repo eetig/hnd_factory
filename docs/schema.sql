@@ -296,11 +296,15 @@ CREATE TABLE IF NOT EXISTS `material_master` (
 -- —— 与工单图片、领料汇总、生产入库的图片约定一致（《前后端改动统筹》契约 2.3），
 -- 前端拿到的始终是相对路径，同源部署无需改配置。
 --
--- 唯一键 (记录日期 + 容器编号)：同一时点、同一容器只应有一条记录（变更-004-1）。
+-- 唯一键 (记录日期 + 容器编号)：**同一天可以有多条记录**（变更-013）。
 --   tank_code 是「设备位号」，比容器名称稳定：名称的叫法会改（V150储罐A → 150#罐），编号不会，
 --   因此唯一键挂在编号上；容器名称、属地退化为随行展示的信息列。
---   location / tank_code 都用 NOT NULL DEFAULT '' 而不是可空 —— MySQL 唯一索引
---   不约束 NULL，列可空时同一天同一容器能插进多条，唯一键形同虚设。
+--   ⚠️ 2026-10-02 起 tank_code 改为**可空**：容器编号那一栏已从界面撤掉（使用方要求），
+--      新增的记录都没有编号，再按 '' 参与唯一键就变成「一天只能有一条」——
+--      而业务上月底同一天本来就有一批容器要各记一条。改存 NULL 后 MySQL 唯一索引
+--      不约束 NULL（多个 NULL 互不相等），同一天想记几条就几条；
+--      真有编号的历史行仍受 (日期 + 编号) 保护，唯一键不会形同虚设。
+--      这正是变更-004-1 当时刻意避开 NULL 的写法 —— 需求反过来后要把这条一并翻过来。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `tank_level_record` (
   `id`                 bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -310,7 +314,7 @@ CREATE TABLE IF NOT EXISTS `tank_level_record` (
   `material_code`      varchar(32)   DEFAULT NULL COMMENT '物料编码（关联物料主数据，可空）',
   `material_name`      varchar(128)  DEFAULT NULL COMMENT '物料名称',
   `tank_name`          varchar(64)   NOT NULL COMMENT '容器名称（储罐号）',
-  `tank_code`          varchar(64)   NOT NULL DEFAULT '' COMMENT '容器编号（设备位号，与记录日期联合唯一）',
+  `tank_code`          varchar(64)   DEFAULT NULL COMMENT '容器编号（设备位号）；为空时同一天可有多条，填了则与记录日期联合唯一',
   `level_value`        decimal(18,4) DEFAULT NULL COMMENT '容器液位',
   `theoretical_weight` decimal(18,4) DEFAULT NULL COMMENT '理论质量(KG)',
   `create_time`        datetime      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -1104,3 +1108,17 @@ SET `container_type` = CASE
 -- --        （删列前先 `SELECT id, file_name FROM tank_level_record WHERE file_name <> ''`
 -- --          留个底，这一步不可逆）
 -- ALTER TABLE `tank_level_record` DROP COLUMN `file_name`;
+
+-- -- 16) 储罐液位记录：记录日期不再唯一（变更-013，2026-10-02）
+-- --     现象：手机上（电脑端一样）新增第二条记录时报
+-- --           「该记录日期已有一条记录（容器编号为空时按日期唯一），请改记录日期。」
+-- --     原因：容器编号那一栏已从界面撤掉，新增记录的 tank_code 落到列默认值 ''，
+-- --           唯一键 uk_date_tank(record_date, tank_code) 于是退化成「一天一条」。
+-- --     改法：tank_code 改为可空，空编号存 NULL —— MySQL 唯一索引不约束 NULL
+-- --           （多个 NULL 互不相等），同一天可记任意多条；有编号的历史行仍受保护。
+-- --     ⚠️ 两句都要跑：第一句放行 NULL，第二句把历史行的 '' 换成 NULL，
+-- --        否则旧行占着 '' 会和后面新插的 NULL 各算一条，看着像「没生效」。
+-- ALTER TABLE `tank_level_record`
+--   MODIFY COLUMN `tank_code` varchar(64) DEFAULT NULL
+--     COMMENT '容器编号（设备位号）；为空时同一天可有多条，填了则与记录日期联合唯一';
+-- UPDATE `tank_level_record` SET `tank_code` = NULL WHERE `tank_code` = '';

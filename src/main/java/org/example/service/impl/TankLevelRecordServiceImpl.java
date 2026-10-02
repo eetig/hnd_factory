@@ -124,10 +124,9 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
                 updateAllFields(record);
             }
         } catch (DuplicateKeyException e) {
-            // 撞唯一键 uk_date_tank：这是正常的业务冲突（同一天同一容器只能一条），
+            // 撞唯一键 uk_date_tank：这是正常的业务冲突（同一天同一容器编号只能一条），
             // 不能把 SQL 异常原样透给前端 —— 用户看不到「哪一行哪一列冲突了」
-            throw new BusinessException("同一天已存在容器编号为「" + record.getTankCode() + "」的记录，"
-                    + "请改记录日期或容器编号。");
+            throw new BusinessException(duplicateMessage(record));
         }
 
         // 新增的记录还没有图据；编辑的要把已有的带回去 ——
@@ -167,6 +166,21 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
                 .set("tank_code", record.getTankCode())
                 .set("level_value", record.getLevelValue())
                 .set("theoretical_weight", record.getTheoreticalWeight()));
+    }
+
+    /**
+     * 唯一键 uk_date_tank 冲突时的提示语。
+     *
+     * <p>变更-012 起 tank_code 可空、空编号存 NULL，而 MySQL 唯一索引不约束 NULL ——
+     * 「同一天多条」本身不会再冲突（页面新增的记录都没有编号，故第一条分支实际已走不到）。
+     * 留着它是为了兜两种情况：升级前遗留的行仍存着空串 ''，以及将来有人把接口当脚本用、
+     * 手填同一个编号在同一天插两次。
+     */
+    private static String duplicateMessage(TankLevelRecord record) {
+        if (!StringUtils.hasText(record.getTankCode())) {
+            return "该记录日期已存在一条容器编号为空的记录，请改记录日期。";
+        }
+        return "同一天已存在容器编号为「" + record.getTankCode() + "」的记录，请改记录日期或容器编号。";
     }
 
     private TankLevelRecord requireRecord(Long id) {

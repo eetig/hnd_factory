@@ -37,12 +37,10 @@ public final class TankLevelValidator {
         if (isBlank(dto.getTankName())) {
             return "请填写容器名称。";
         }
-        if (isBlank(dto.getTankCode())) {
-            // 容器编号是唯一键 (record_date, tank_code) 的一半。库列是 NOT NULL DEFAULT ''，
-            // 放着不管的话空串能重复插入 —— 同一日期就能录进无数条「无编号」记录，
-            // 唯一键形同虚设（schema.sql 里对这一列的注释写的就是这个坑）。
-            return "请填写容器编号：它与记录日期一起唯一标识一条记录，不能为空。";
-        }
+        // 容器编号【不再校验】：界面（hnd_factory_UI）已撤掉这一栏，新增的记录必然没有编号，
+        // 再拦就是「页面上根本填不了、却被告知必须填」。空编号落库后由唯一键
+        // uk_date_tank (record_date, tank_code) 兜底 —— 此时它退化成「一天一条」，
+        // 撞上时 Service 会给可读提示（见 TankLevelRecordServiceImpl.duplicateMessage）。
         if (isNegative(dto.getLevelValue())) {
             return "容器液位不能为负数。";
         }

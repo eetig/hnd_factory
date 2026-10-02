@@ -13,8 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 /**
  * 录入校验的边界。
  *
- * <p>重点钉住「容器编号不能为空」—— 它是唯一键的一半，放空串进去不会报错，
- * 而是让同一日期能重复插入任意多条「无编号」记录，唯一键静默失效。
+ * <p>「容器编号」已不再校验：界面撤掉了这一栏，新增的记录本来就拿不到编号。
+ * 空编号的兜底挪到了唯一键 uk_date_tank (record_date, tank_code) 上 ——
+ * 它此时退化成「一天一条」，撞上时由 Service 给可读提示。
  */
 class TankLevelValidatorTest {
 
@@ -53,17 +54,17 @@ class TankLevelValidatorTest {
     }
 
     @Test
-    @DisplayName("容器编号为空即拦下 —— 空串会让唯一键 uk_date_tank 形同虚设")
-    void rejectsBlankTankCode() {
+    @DisplayName("容器编号为空即通过 —— 界面已撤掉这一栏，空编号由唯一键兜底，不在录入口拦")
+    void acceptsBlankTankCode() {
         TankLevelSaveDTO dto = valid();
         dto.setTankCode("");
-        assertNotNull(TankLevelValidator.validate(dto));
+        assertNull(TankLevelValidator.validate(dto));
 
         dto.setTankCode("   ");
-        assertNotNull(TankLevelValidator.validate(dto));
+        assertNull(TankLevelValidator.validate(dto));
 
         dto.setTankCode(null);
-        assertNotNull(TankLevelValidator.validate(dto));
+        assertNull(TankLevelValidator.validate(dto));
     }
 
     @Test
