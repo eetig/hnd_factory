@@ -437,7 +437,7 @@ CREATE TABLE IF NOT EXISTS `equipment_ledger` (
 -- ---------------------------------------------------------------------------
 INSERT INTO `sys_role` (`role_name`, `role_key`, `description`) VALUES
   ('管理员', 'admin',       '全部权限'),
-  ('班组长', 'team_leader', '本组工单编辑'),
+  ('班组长', 'team_leader', '只读（写操作仅管理员）'),
   ('操作工', 'operator',    '仅查看'),
   ('游客',   'guest',       '只读，不能执行任何写操作')
 ON DUPLICATE KEY UPDATE
@@ -461,8 +461,14 @@ ON DUPLICATE KEY UPDATE
 -- 说明：查询类接口后端已放开免登录，*:view 主要供前端做按钮显隐；
 --      后端实际强制校验的是写操作权限（edit/import/upload/delete）。
 --
--- tank_level:* 只授给 admin：储罐液位是月度台账的原始记录，改错会直接影响
--- 后面按液位算出的量，本期先收在管理员手里，待录入流程稳定后再考虑下放给班组长。
+-- 写操作（增删改）一律只授给 admin：不以 :view 结尾的都是写权限，全部收在管理员手里。
+-- 业务要求「只有 admin 能增删改」——前端靠这份清单隐藏入口，后端另有 SaTokenConfigure
+-- 的集中闸门兜底（非 admin 调写接口一律 403，不依赖本表数据）。
+-- 原先 tank_level:* 单独只授 admin 的理由（月度台账原始记录，改错影响后续算量），
+-- 现在对全部写权限一视同仁。
+--
+-- ⚠️ 下面这段 INSERT 只做「补」、不负责「撤」：老库里 team_leader / operator 早就被授过
+--    写权限，光改这份清单不会让它们消失 —— 靠紧随其后的那段 DELETE 收口。
 -- ---------------------------------------------------------------------------
 INSERT INTO `sys_role_permission` (`role_id`, `permission_key`)
 SELECT r.`id`, x.`perm`
@@ -482,21 +488,14 @@ JOIN (
   SELECT 'admin', 'inbound:view'                  UNION ALL
   SELECT 'admin', 'tank_level:edit'               UNION ALL
   SELECT 'admin', 'tank_level:delete'             UNION ALL
-  -- team_leader：除「删除工单」外
+  -- team_leader：仅查看（写权限一律只授 admin，见下方撤权段）
   SELECT 'team_leader', 'work_order:view'         UNION ALL
-  SELECT 'team_leader', 'work_order:add'          UNION ALL
-  SELECT 'team_leader', 'work_order:edit'         UNION ALL
-  SELECT 'team_leader', 'work_order:import'       UNION ALL
-  SELECT 'team_leader', 'work_order:image:upload' UNION ALL
-  SELECT 'team_leader', 'work_order:image:delete' UNION ALL
   SELECT 'team_leader', 'goods_move:view'         UNION ALL
-  SELECT 'team_leader', 'goods_move:import'       UNION ALL
   SELECT 'team_leader', 'pick:view'               UNION ALL
   SELECT 'team_leader', 'inbound:view'            UNION ALL
-  -- operator：可查看 + 可导入货物移动，不能改工单
+  -- operator：仅查看
   SELECT 'operator', 'work_order:view'            UNION ALL
   SELECT 'operator', 'goods_move:view'            UNION ALL
-  SELECT 'operator', 'goods_move:import'          UNION ALL
   SELECT 'operator', 'pick:view'                  UNION ALL
   SELECT 'operator', 'inbound:view'               UNION ALL
   -- guest：仅查看
@@ -512,11 +511,38 @@ WHERE NOT EXISTS (
 
 
 -- ---------------------------------------------------------------------------
+-- 写权限收归 admin：撤掉非 admin 角色手里的写权限（幂等，可重复执行）
+--
+-- 上面那段 INSERT ... WHERE NOT EXISTS 是「只补不撤」的，所以老库需要这段来对齐：
+-- 跑完本文件后，任何非 admin 角色的写权限都会被清掉，只剩 *:view。
+-- 判定口径：写权限 = 权限清单里不以 :view 结尾的那 9 个标识（与 @SaCheckPermission
+-- 用到的完全一一对应，含两个预留未用的 work_order:add / work_order:delete）。
+-- 注意与 SaTokenConfigure 的集中闸门是两层：这里管「没授权就别想有」，那里管
+-- 「哪怕授权了、非 admin 也一律 403」。
+-- ---------------------------------------------------------------------------
+DELETE p FROM `sys_role_permission` p
+JOIN `sys_role` r ON r.`id` = p.`role_id`
+WHERE r.`role_key` <> 'admin'
+  AND p.`permission_key` IN (
+    'work_order:add',
+    'work_order:edit',
+    'work_order:delete',
+    'work_order:import',
+    'work_order:image:upload',
+    'work_order:image:delete',
+    'goods_move:import',
+    'tank_level:edit',
+    'tank_level:delete'
+  );
+
+
+-- ---------------------------------------------------------------------------
 -- 初始账号
 --
 --   admin / admin123   管理员（全部权限）
 --   guest / admin      游客（只读，不能导入/上传任何文件）
 --   test  / test       游客（只读，早期测试账号）
+--   eetig / （不记录）   管理员（决策-004 新增；明文不落仓库，种子见下方最后一条）
 --
 -- 密码为 BCrypt 密文（$2a$ 前缀，与 Sa-Token 内置 BCrypt 兼容）。
 -- 如需重置密码，用项目的 org.example.util.BCryptUtil.encode("新密码") 生成后替换。
@@ -545,6 +571,17 @@ SELECT 'test',
        '测试账号',
        r.`id`, 1
 FROM `sys_role` r WHERE r.`role_key` = 'guest'
+ON DUPLICATE KEY UPDATE `role_id` = VALUES(`role_id`), `real_name` = VALUES(`real_name`);
+
+-- 第二个管理员（决策-004）：与 admin 同角色，权限同样来自 admin 角色（13 项）。
+-- 这一条的**明文密码不写进仓库**（上面三条是历史遗留的写法，不再沿用）——
+-- 本文件里只留密文，需要重置时用 org.example.util.BCryptUtil.encode("新密码") 生成后替换。
+INSERT INTO `sys_user` (`username`, `password`, `real_name`, `role_id`, `status`)
+SELECT 'eetig',
+       '$2a$12$63/rcK3f01zHKpD9nsKp.OP52IYpDSY0W.bOw0aWy80adDKl0vkxS',
+       '管理员',
+       r.`id`, 1
+FROM `sys_role` r WHERE r.`role_key` = 'admin'
 ON DUPLICATE KEY UPDATE `role_id` = VALUES(`role_id`), `real_name` = VALUES(`real_name`);
 
 

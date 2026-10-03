@@ -2,6 +2,7 @@ package org.example.exception;
 
 import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.exception.NotPermissionException;
+import cn.dev33.satoken.exception.NotRoleException;
 import cn.dev33.satoken.exception.SaTokenException;
 import org.example.dto.ExcelResult;
 import org.example.dto.Result;
@@ -28,6 +29,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NotPermissionException.class)
     public ResponseEntity<ExcelResult<Void>> handleNotPermission(NotPermissionException e) {
         return build(HttpStatus.FORBIDDEN, "无权限访问：" + e.getPermission());
+    }
+
+    // 无角色：写操作（增删改）只允许 admin，见 SaTokenConfigure 的集中闸门
+    @ExceptionHandler(NotRoleException.class)
+    public ResponseEntity<ExcelResult<Void>> handleNotRole(NotRoleException e) {
+        return build(HttpStatus.FORBIDDEN, "无权限访问：该操作仅管理员可用");
     }
 
     // 其它 Sa-Token 异常兜底
