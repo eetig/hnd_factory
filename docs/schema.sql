@@ -391,19 +391,40 @@ CREATE TABLE IF NOT EXISTS `tank_level_image` (
 --   （工作表填 'manual'，行号取同工作表最大值 +1），否则重复导入会多出一行。
 --
 -- 容器类型（container_type）：
---   按 spec 派生 —— 含「卧式」为 1、含「平底」为 2、都不含为 3。
+--   按 spec 派生 —— 含「管束」为 4（再沸器）、含「卧式」为 1、含「平底」为 2（平底立式）、都不含为 3（立式）。
 --   源台账把容器型式写在规格后面的括号里（「DN1000x3400（卧式）」「Φ800x1100（平底）」），
 --   但业务要按型式分桶时不能让调用方各写一遍字符串匹配，故落成整型列。
---   判定规则与回填语句见第 2 部分（幂等，每次执行本文件按 spec 重算全表）。
+--   「管束」那一条排最前：再沸器既是卧式又带管束，顺序反了就判不到 4。
+--   ⚠️ 本列**可空**，回填只填 NULL —— 见下面回填语句与列注释里的理由。
+--   判定规则与回填语句见第 2 部分（幂等：**只填 NULL 的行**，人工改过的不动）。
 --   暂不建索引：全表 91 行（将来几百行），低基数列上索引帮不上优化器。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `equipment_ledger` (
   `id`              bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `equipment_code`  varchar(64)   NOT NULL DEFAULT '' COMMENT '设备位号（产品编号），源台账缺号时为空串',
   `equipment_name`  varchar(128)  NOT NULL COMMENT '设备名称（如 三甲粗品罐）',
+  `nickname`        varchar(64)   DEFAULT NULL COMMENT '设备昵称（短名，供下拉与搜索用；可空）',
   `workshop`        varchar(32)   NOT NULL DEFAULT '' COMMENT '车间/装置（一车间/三甲车间/四甲车间/罐区/公用工程）',
   `spec`            varchar(128)  DEFAULT NULL COMMENT '设备规格（公称直径×筒体长度，如 DN1600x2000）',
-  `container_type`  tinyint       NOT NULL DEFAULT 3 COMMENT '容器类型 1卧式 2平底 3其他（由 spec 判定：含「卧式」→1，含「平底」→2，都不含→3）',
+  -- ⚠️ **可空且无默认值**（2026-10-06 起）：它是由 spec 派生的输出列，回填语句只填 NULL 的行，
+  -- 人工在「设备数据维护」页改过的值就不会被重复执行本文件刷回去。原先 NOT NULL DEFAULT 3，
+  -- 分不出「默认的 3」和「人工设的 3」，维护页一上线就会互相打架。
+  `container_type`  tinyint       DEFAULT NULL COMMENT '容器类型 1卧式 2平底立式 3立式 4再沸器（由 spec 判定：含「管束」→4，含「卧式」→1，含「平底」→2，都不含→3；NULL = 尚未派生）',
+  -- 以下 7 列专供「压力容器体积计算」页（变更-025）。前 5 列是该页**自己算**体积用的，
+  -- 不依赖 head_volume / volume_per_mm 那套线性近似（那套在卧式罐、以及液面落在封头里时不成立）。
+  -- 口径务必与 head_volume 对齐：**head_volume = 单个封头的「曲面 + 直边」**，
+  -- 所以 shell_length 存的是**不含直边**的筒体直段长，直边另存一列。
+  -- 这几列填齐（且 enabled=1）的行才会出现在该页的下拉里；留空即「本行不参与体积计算」。
+  -- 「朝向」不另开列：复用 container_type（**1 或 4** = 卧式，2/3 = 立式）—— 该列已有的规矩是
+  -- 「型式由 spec 派生，要改就改 spec」，再开一列会出现两列互相矛盾的可能。
+  -- ⚠️ 因此新增卧式容器时 spec 里必须带「卧式」二字，否则会被当成立式。
+  `inner_diameter`    decimal(18,2) DEFAULT NULL COMMENT '容器内径(mm)',
+  `shell_length`      decimal(18,2) DEFAULT NULL COMMENT '筒体直段长(mm)，**不含封头直边**',
+  `straight_flange`   decimal(18,2) DEFAULT NULL COMMENT '封头直边(mm)，无直边填 0',
+  `top_head_depth`    decimal(18,2) DEFAULT NULL COMMENT '上/左封头曲面深度(mm)，标准椭圆封头 = 内径/4',
+  `bottom_head_depth` decimal(18,2) DEFAULT NULL COMMENT '下/右封头曲面深度(mm)；NULL 或 0 = 平底',
+  `image_file`        varchar(128)  DEFAULT NULL COMMENT '容器底图文件名；深色版按 -dark 后缀约定取（两套前端各自的资源里同名、分辨率不同）',
+  `image_bounds`      json          DEFAULT NULL COMMENT '底图坐标，**按图片宽度归一化**（width 恒为 1、height 是长宽比、其余为占图宽的比例）—— 归一化才能让原图端与 1/2 压图端共用同一组坐标。由 resources/compress-vessel-images.py 打印',
   `thickness`       varchar(32)   DEFAULT NULL COMMENT '筒体厚度(mm)，源台账有 8mm/10mm 这类多段写法',
   `volume`          decimal(18,4) DEFAULT NULL COMMENT '容积(m3)，源台账 V= 前缀',
   `heat_area`       decimal(18,4) DEFAULT NULL COMMENT '换热面积(m2)，源台账 F= 前缀（与容积互斥）',
@@ -488,6 +509,10 @@ JOIN (
   SELECT 'admin', 'inbound:view'                  UNION ALL
   SELECT 'admin', 'tank_level:edit'               UNION ALL
   SELECT 'admin', 'tank_level:delete'             UNION ALL
+  -- 设备数据维护（2026-10-06）：写权限照例只授 admin（同「写操作一律仅 admin」的既定口径）。
+  -- 单独一个权限位而不是复用 tank_level:edit —— 将来要放开给非 admin 的维护员时，
+  -- 只需给那个角色加这一位，不必动接口。
+  SELECT 'admin', 'equipment:edit'                UNION ALL
   -- team_leader：仅查看（写权限一律只授 admin，见下方撤权段）
   SELECT 'team_leader', 'work_order:view'         UNION ALL
   SELECT 'team_leader', 'goods_move:view'         UNION ALL
@@ -985,34 +1010,150 @@ ON DUPLICATE KEY UPDATE
 
 
 -- ---------------------------------------------------------------------------
+-- 容器几何参数回填（变更-025）—— 只服务「压力容器体积计算」页
+--
+-- 这 7 列不在源台账《容器封头参数表》里，是照着**图纸/铭牌**填的，
+-- 所以与上面的 91 行批量导入分开写：批量那份抄源表，这里这份逐台核对。
+--
+-- ⚠️ **每列都用 `COALESCE(列, 值)` 只填空、不覆盖**（2026-10-06 起）。
+-- 原因：这些列现在是「设备数据维护」页可改的，用 `= 值` 会在重复执行本文件时
+-- 把维护页刚改的值刷回去。与种子段「不冲掉业务侧补的 density / medium / enabled」同一条原则。
+--
+-- 口径（必须与 head_volume 对齐，填错一位整页数值就偏）：
+--   · `shell_length` 是**不含封头直边**的筒体直段长，直边单列 `straight_flange`
+--     —— 因为库里的 head_volume = 单个封头的「曲面 + 直边」，
+--     拿它反算就能校验几何填得对不对（见下面每行的对账值）。
+--   · 卧式容器的两端封头相同，`top_head_depth` 与 `bottom_head_depth` 填一样的值；
+--     立式平底容器的 `bottom_head_depth` 留 NULL。
+--   · 「朝向」不另开列：`container_type` 为 1 或 4 即卧式（该列由 spec 派生，见上一节）。
+--
+-- 定位方式用 (source_sheet, source_row) 而不是 id —— 那是本表既有的业务键，
+-- 换库/重导后 id 会变，这两个不会。重复执行无副作用。
+-- ---------------------------------------------------------------------------
+
+-- 三氯氢硅储罐（Φ2800x5500 卧式，两端椭圆封头 D/4=700，直边 40）
+--   对账：head_volume 应为 (2/3)π·1.4²·0.7 + π·1.4²·0.04 = 3.1202，库里 3.1198 ✓
+--   介质与密度：源台账未给（第 2 部分开头那条示例 UPDATE 一直是注释状态），
+--   这里补上前端原本写死的值。**用 COALESCE 只填空、不覆盖** ——
+--   与上面种子段「不冲掉业务侧补的密度」是同一条原则，重复执行本段也不会改动手工改过的值。
+UPDATE `equipment_ledger` SET
+  `inner_diameter`    = COALESCE(`inner_diameter`,    2800),
+  `shell_length`      = COALESCE(`shell_length`,      5500),
+  `straight_flange`   = COALESCE(`straight_flange`,   40),
+  `top_head_depth`    = COALESCE(`top_head_depth`,    700),
+  `bottom_head_depth` = COALESCE(`bottom_head_depth`, 700),
+  `image_file`        = COALESCE(`image_file`,        'vessel.png'),
+  `image_bounds`      = COALESCE(`image_bounds`,      CAST('{"width":2150,"height":1060,"left":75,"right":2069,"top":131,"bottom":931}' AS JSON)),
+  `medium`            = COALESCE(`medium`,  '三氯氢硅'),
+  `density`           = COALESCE(`density`, 1.35)
+WHERE `source_sheet` = '容器封头参数表2025.06' AND `source_row` = 87;
+
+-- 甲醇计量罐（DN2300 夹套 / 内罐 DN2200x3400，**上下都有封头** D/4=550，直边 40）
+--   对账：head_volume 应为 (2/3)π·1.1²·0.55 + π·1.1²·0.04 = 1.5459，库里 1.5459 ✓ 分毫不差
+UPDATE `equipment_ledger` SET
+  `inner_diameter`    = COALESCE(`inner_diameter`,    2200),
+  `shell_length`      = COALESCE(`shell_length`,      3400),
+  `straight_flange`   = COALESCE(`straight_flange`,   40),
+  `top_head_depth`    = COALESCE(`top_head_depth`,    550),
+  `bottom_head_depth` = COALESCE(`bottom_head_depth`, 550),
+  `image_file`        = COALESCE(`image_file`,        'vessel-methanol.png'),
+  `image_bounds`      = COALESCE(`image_bounds`,      CAST('{"width":708,"height":1520,"left":72,"right":627.5,"top":83,"tangent":218,"tangentBottom":1114,"bottom":1247}' AS JSON)),
+  `medium`            = COALESCE(`medium`,  '甲醇'),
+  `density`           = COALESCE(`density`, 0.792)
+WHERE `source_sheet` = '容器封头参数表2025.06' AND `source_row` = 37;
+
+-- 150产品罐（Φ3600x4800，**平底**，只有上封头 D/4=900，无直边）
+--   注①：这一行源表未给 head_volume（remark 写着「平底，源表未给封头容积」），
+--        故上面那套对账对它不适用 —— 页面上会自动跳过没有 head_volume 的行
+--   注②：**不写 `bottom_head_depth`** —— 平底就该留 NULL，而 `COALESCE(bottom_head_depth, NULL)`
+--        是个空操作；写成 `= NULL` 反而会把维护页刚填的下封头深清掉。
+UPDATE `equipment_ledger` SET
+  `inner_diameter`    = COALESCE(`inner_diameter`, 3600),
+  `shell_length`      = COALESCE(`shell_length`,   4800),
+  `straight_flange`   = COALESCE(`straight_flange`, 0),
+  `top_head_depth`    = COALESCE(`top_head_depth`, 900),
+  `image_file`        = COALESCE(`image_file`,     'vessel-product150.png'),
+  `image_bounds`      = COALESCE(`image_bounds`,   CAST('{"width":1760,"height":1938,"left":131,"right":1351,"top":63,"tangent":310,"bottom":1930}' AS JSON)),
+  `medium`            = COALESCE(`medium`,  '乙烯基三氯硅烷'),
+  `density`           = COALESCE(`density`, 1.27)
+WHERE `source_sheet` = '容器封头参数表2025.06' AND `source_row` = 89;
+
+-- 再沸器：**不在源台账里**（来自厂家图纸），手工补一行。
+--   source_sheet 用独立的名字，避免与那 91 行混在一起；source_row 给 1。
+--   对账：head_volume = (2/3)π·1.1²·0.55 + π·1.1²·0.04 = 1.5459（与甲醇计量罐同直径同封头）
+--   ⚠️ 壳体内置 U 型管束（87 根 φ25、罐内 2 程 × 3.6m）**尚未落库** ——
+--      当前由前端的临时覆盖表顶着，见《前后端改动统筹》变更-025 的技术债。
+INSERT INTO `equipment_ledger`
+  (`equipment_name`, `spec`, `head_volume`, `volume`, `remark`, `source_sheet`, `source_row`,
+   `inner_diameter`, `shell_length`, `straight_flange`, `top_head_depth`, `bottom_head_depth`,
+   `image_file`, `image_bounds`)
+VALUES
+  ('再沸器', 'DN2200x4000（卧式·内置U型管束）', 1.5459, 21.2,
+   '厂家图纸。壳体内置 U 型管束 87 根 φ25（罐内 2 程 × 3.6m），管束参数待落库。volume 是铭牌全容积，与按几何算出的 18.30 m³ 不一致，页面上只作对照、不参与计算。spec 里的「内置U型管束」是**必须的**——container_type=4 由它派生，见下方回填语句',
+   '手工补充·再沸器图纸', 1,
+   2200, 4000, 40, 550, 550,
+   'vessel-reboiler.png',
+   '{"width":1616,"height":820,"left":53,"right":1377,"top":92,"bottom":659}')
+ON DUPLICATE KEY UPDATE
+  -- 全部走 COALESCE：重复执行只填「还是空」的列，**不覆盖**维护页改过的值。
+  -- 这几列在本表里都非空（或新增行已由上面的 VALUES 填好），所以对已存在的行实际是空操作 ——
+  -- 上面那份 VALUES 只在**首次插入**时生效。这是有意的：人工判定优先于本文件的抄录。
+  `equipment_name`    = COALESCE(`equipment_name`,    VALUES(`equipment_name`)),
+  `spec`              = COALESCE(`spec`,              VALUES(`spec`)),
+  `head_volume`       = COALESCE(`head_volume`,       VALUES(`head_volume`)),
+  `volume`            = COALESCE(`volume`,            VALUES(`volume`)),
+  `remark`            = COALESCE(`remark`,            VALUES(`remark`)),
+  `inner_diameter`    = COALESCE(`inner_diameter`,    VALUES(`inner_diameter`)),
+  `shell_length`      = VALUES(`shell_length`),
+  `straight_flange`   = VALUES(`straight_flange`),
+  `top_head_depth`    = VALUES(`top_head_depth`),
+  `bottom_head_depth` = VALUES(`bottom_head_depth`),
+  `image_file`        = VALUES(`image_file`),
+  `image_bounds`      = VALUES(`image_bounds`);
+
+
+-- ---------------------------------------------------------------------------
 -- 容器类型回填
 --
--- 规则：`spec` 含「卧式」→ 1；含「平底」→ 2；都不含 → 3。
+-- 规则：`spec` 含「管束」→ 4；含「卧式」→ 1；含「平底」→ 2；都不含 → 3。
+--
+-- **4 = 再沸器**（卧式带内置管束那一种，体积计算页要扣掉管内排液体积）。
+-- 它也是个**派生列**：靠 spec 里的「管束」二字识别。
+--
+-- ⚠️ **只填 `container_type IS NULL` 的行**（2026-10-06 起）。原因：有了「设备数据维护」页之后
+-- 这一列是可人工改的 —— 原先「每次执行都按 spec 重算全表」的写法会把维护页刚改的值刷回去。
+-- 与该表既有的「不覆盖业务侧补的 density / medium / enabled」是同一条原则。
+-- 代价：**光在界面上改这一列、不改 spec，下次重跑本文件不会同步**（本来也不会 —— 只在 NULL 时才填），
+-- 这正是想要的：人工的判定优先于文本派生。
 --
 -- 为什么在导入之后单独跑一条 UPDATE，而不是写进上面的 VALUES：
 --   它是**纯派生列**（只由 spec 决定），用一条语句算全表，比在 91 行 VALUES 里
 --   手抄 91 个数字可靠 —— 手抄的那份迟早会和 spec 不一致，且将来追加的
 --   「另 6 页设备台账」不必再逐行判定。
 --
--- 与上面「有意不更新」的几列不是一回事：density / mass_per_mm 是业务侧补的**输入**，
--- 重复导入不能冲掉；container_type 是**输出**，每次执行本文件都按 spec 重算
--- （含手工新增的行）。若某行需要与 spec 不符的容器类型，正确做法是改 spec，不是改本列。
---
 -- 几个判定细节：
---   · 顺序固定「先卧式后平底」。两种写法在源台账里互斥（都写在规格的括号里），
---     当前 91 行无一同时含两词，顺序只是给将来留一个确定答案。
+--   · **顺序固定「先管束、再卧式、再平底」**。顺序有实质影响，不是随手排的：
+--     再沸器既是「卧式」又「带管束」，管束那条必须排在前面才判得到 4。
+--     另外两种写法在源台账里互斥（都写在规格的括号里），顺序只是给将来留一个确定答案。
 --   · spec 为 NULL / 空串 → 落 3（「都不包含」的自然结果），不猜成 1 或 2。
 --   · LIKE 的 % 只加在词两侧，不锚定括号 —— 源台账里这两种写法既有全角括号
 --     「（卧式）」也有别的形态，锚定括号会漏判。
 --
--- 实测分布（91 行）：卧式 8 / 平底 10 / 其他 73。
+-- ⚠️ **位置有讲究：必须排在上面「容器几何参数回填」之后。** 那一节会**插入新行**
+--    （再沸器不在源台账里，是手工补的），而本列是「每次执行都按 spec 重算全表」的
+--    输出列 —— 排在它前面就会漏算刚插进来的行。实测踩过：再沸器的 spec 明明写着
+--    「（卧式）」，却因为本语句先跑而落成了 3（其他），体积计算页会把它画成立式。
+--
+-- 实测分布（91 行 + 手工补充行）：卧式 8 / 平底立式 10 / 立式 73 / 再沸器 1。
 -- ---------------------------------------------------------------------------
 UPDATE `equipment_ledger`
 SET `container_type` = CASE
+      WHEN `spec` LIKE '%管束%' THEN 4
       WHEN `spec` LIKE '%卧式%' THEN 1
       WHEN `spec` LIKE '%平底%' THEN 2
       ELSE 3
-    END;
+    END
+WHERE `container_type` IS NULL;
 
 
 -- =============================================================================
@@ -1095,16 +1236,20 @@ SET `container_type` = CASE
 -- --        `mass_per_mm` = `volume_per_mm` * 0.792 * 1000
 -- --   WHERE `equipment_name` IN ('甲醇储罐A', '甲醇储罐B');
 
--- -- 12) 设备台账：新增容器类型列（变更-006）
+-- -- 12) 设备台账：新增容器类型列（变更-006；枚举在 变更-025 扩了第 4 个值）
 -- --     全新库跑完第 1 部分就有了，本节只给「变更-005 之后已建表」的旧库升级用。
 -- --     DEFAULT 3 让既有行先落到「其他」，紧接着的回填语句再按 spec 逐行纠正。
+-- --     ⚠️ 变更-025 起多了 4 = 卧式带内置管束（再沸器那一种），判定顺序「先管束再卧式」
+-- --        有实质影响 —— 再沸器两个词都占，顺序反了就落到 1 而不是 4。
+-- --        已经跑过本步的库再跑一次即可（UPDATE 是幂等的，会把已有行刷成新枚举）。
 -- ALTER TABLE `equipment_ledger`
 --   ADD COLUMN `container_type` tinyint NOT NULL DEFAULT 3
---     COMMENT '容器类型 1卧式 2平底 3其他（由 spec 判定：含「卧式」→1，含「平底」→2，都不含→3）'
+--     COMMENT '容器类型 1卧式 2平底 3其他 4卧式带内置管束（由 spec 判定：含「管束」→4，含「卧式」→1，含「平底」→2，都不含→3）'
 --   AFTER `spec`;
 -- -- 回填（与第 2 部分同一段逻辑；重复执行无副作用）
 -- UPDATE `equipment_ledger`
 -- SET `container_type` = CASE
+--       WHEN `spec` LIKE '%管束%' THEN 4
 --       WHEN `spec` LIKE '%卧式%' THEN 1
 --       WHEN `spec` LIKE '%平底%' THEN 2
 --       ELSE 3
@@ -1159,3 +1304,20 @@ SET `container_type` = CASE
 --   MODIFY COLUMN `tank_code` varchar(64) DEFAULT NULL
 --     COMMENT '容器编号（设备位号）；为空时同一天可有多条，填了则与记录日期联合唯一';
 -- UPDATE `tank_level_record` SET `tank_code` = NULL WHERE `tank_code` = '';
+
+-- -- 15) 设备台账：新增容器几何参数与底图列（变更-025）
+-- --     全新库跑完第 1 部分就有了，本节只给「变更-006 之后已建表」的旧库升级用。
+-- --     7 列都允许 NULL —— 填齐（且 enabled=1）的行才会出现在「压力容器体积计算」页的下拉里。
+-- --     列注释里那几条口径（shell_length 不含直边、image_bounds 按图片宽度归一化、
+-- --     朝向复用 container_type）不要省，否则下次填数的人一定会填错。
+-- ALTER TABLE `equipment_ledger`
+--   ADD COLUMN `inner_diameter`    decimal(18,2) DEFAULT NULL COMMENT '容器内径(mm)' AFTER `container_type`,
+--   ADD COLUMN `shell_length`      decimal(18,2) DEFAULT NULL COMMENT '筒体直段长(mm)，**不含封头直边**',
+--   ADD COLUMN `straight_flange`   decimal(18,2) DEFAULT NULL COMMENT '封头直边(mm)，无直边填 0',
+--   ADD COLUMN `top_head_depth`    decimal(18,2) DEFAULT NULL COMMENT '上/左封头曲面深度(mm)，标准椭圆封头 = 内径/4',
+--   ADD COLUMN `bottom_head_depth` decimal(18,2) DEFAULT NULL COMMENT '下/右封头曲面深度(mm)；NULL 或 0 = 平底',
+--   ADD COLUMN `image_file`        varchar(128)  DEFAULT NULL COMMENT '容器底图文件名；深色版按 -dark 后缀约定取',
+--   ADD COLUMN `image_bounds`      json          DEFAULT NULL COMMENT '底图坐标，按图片宽度归一化（width 恒为 1、height 是长宽比）';
+--
+-- -- 升级后接着跑**第 2 部分的「容器几何参数回填」那一节**（3 条 UPDATE + 再沸器的 INSERT），
+-- -- 它按 (source_sheet, source_row) 定位、可重复执行。

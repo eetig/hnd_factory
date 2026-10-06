@@ -19,9 +19,20 @@ public class EquipmentLedgerVO {
     private Long id;
     private String equipmentCode;    // 设备位号（产品编号）
     private String equipmentName;    // 设备名称
+    private String nickname;         // 设备昵称（短名，可空）
     private String workshop;         // 车间/装置
     private String spec;             // 设备规格（公称直径×筒体长度）
     private Integer containerType;   // 容器类型 1卧式 2平底 3其他
+    // 容器几何参数与底图（变更-025）：供「压力容器体积计算」页按几何精算体积。
+    // 该页走的是精简的 /api/equipment/vessels（见 VesselVO），这里一并带上是为了
+    // 本 VO「与库表一一对应、不做裁剪」的既有约定（少给一个字段就要再补一次接口）。
+    private BigDecimal innerDiameter;    // 容器内径(mm)
+    private BigDecimal shellLength;      // 筒体直段长(mm)，不含封头直边
+    private BigDecimal straightFlange;   // 封头直边(mm)
+    private BigDecimal topHeadDepth;     // 上/左封头曲面深度(mm)
+    private BigDecimal bottomHeadDepth;  // 下/右封头曲面深度(mm)；null = 平底
+    private String imageFile;            // 底图文件名
+    private String imageBounds;          // 底图坐标 JSON（按图片宽度归一化）
     private String thickness;        // 筒体厚度(mm)
     private BigDecimal volume;       // 容积(m3)
     private BigDecimal heatArea;     // 换热面积(m2)
@@ -33,4 +44,7 @@ public class EquipmentLedgerVO {
     private String designTemp;       // 操作温度(℃)
     private String designPressure;   // 操作压力(MPa)
     private String remark;           // 备注
+    // 「设备数据维护」页要用：列表上显示启停状态、并切换它。
+    // 该 VO 的约定是与库表一一对应、不做裁剪，这一列本来就该在（此前漏了）。
+    private Integer enabled;         // 是否启用 1启用 0停用
 }

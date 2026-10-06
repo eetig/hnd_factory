@@ -2,6 +2,7 @@ package org.example.component;
 
 import org.example.dto.ImgResult;
 import org.example.dto.UploadResult;
+import org.example.dto.VesselDrawingResult;
 import org.example.feign.ImgFeignClient;
 import org.example.util.InMemoryMultipartFile;
 import org.example.util.WpsCellImageUtil;
@@ -55,5 +56,22 @@ public class ImgUploader {
             throw new IllegalStateException("img-service 返回异常");
         }
         return res.getData().getFileName();
+    }
+
+    /**
+     * 上传容器底图（「设备数据维护」页，2026-10-06）：**一张进、两张出**。
+     *
+     * <p>与上面两个方法分开：它们回一个 fileName 就够（单据图片只用于显示），
+     * 底图要回一对（白纸版 + 亮线版，深浅两个主题各要一版），且 img-service 侧会先做
+     * 图像处理（合成白底、算墨量出亮线版）。
+     *
+     * @return 两个文件名，调用方把 {@code fileName} 拼成 {@code /files/xxx} 存进 image_file
+     */
+    public VesselDrawingResult uploadVesselDrawing(MultipartFile file) {
+        ImgResult<VesselDrawingResult> res = imgFeignClient.vesselUpload(file);
+        if (res == null || res.getCode() != 200 || res.getData() == null) {
+            throw new IllegalStateException("img-service 返回异常");
+        }
+        return res.getData();
     }
 }
