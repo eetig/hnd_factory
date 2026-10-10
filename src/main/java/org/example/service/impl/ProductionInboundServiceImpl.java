@@ -1,7 +1,12 @@
 package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import org.example.dto.DateRangeQueryDTO;
+import org.example.dto.MaterialDocQueryDTO;
+import org.example.dto.InboundSummaryGroupVO;
 import org.example.dto.ProductionInboundVO;
 import org.example.dto.WorkOrderImportSaveVO;
 import org.example.entity.ProductionInbound;
@@ -14,11 +19,14 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.text.Collator;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -123,6 +131,115 @@ public class ProductionInboundServiceImpl extends ServiceImpl<ProductionInboundM
             qtyMap.put(DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode()), p.getInboundQty());
         }
         return qtyMap;
+    }
+
+    @Override
+    public IPage<ProductionInboundVO> listPage(MaterialDocQueryDTO query) {
+        Page<ProductionInbound> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
+        return baseMapper.selectPage(page, filterOnly(query)
+                        // ⚠️ 末尾必须再按 id 兜一层：**分页要求排序键唯一**。
+                        // 同一天的记录不止一条，只按日期+序号排时 MySQL 不保证两次查询的
+                        // 相对顺序一致 —— 翻页会漏行、也会重复行。改造前只查一次数组再本地
+                        // slice，所以这个问题根本不会暴露，是改后端分页才引入的新要求。
+                        .orderByDesc("inbound_date").orderByAsc("seq_no").orderByAsc("id"))
+                .convert(this::toVO);
+    }
+
+    @Override
+    public List<String> listMaterialNames(DateRangeQueryDTO query) {
+        // ⚠️ 不带物料名称条件：否则选中一个物料后，弹窗里就只剩它自己，想改选得先清空筛选。
+        // 改造前前端也是这么算的（只按日期区间从全量里取名称去重）。
+        QueryWrapper<ProductionInbound> wrapper = dateRangeOnly(query).select("material_name");
+        return baseMapper.selectList(wrapper).stream()
+                .map(ProductionInbound::getMaterialName)
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                // 按中文排序：与改造前前端的 localeCompare('zh-CN') 一致。
+                // 不能交给 SQL 的 ORDER BY —— utf8mb4 默认排序规则是按码点，
+                // 中文出来的顺序不是拼音顺序，与用户习惯的顺序对不上。
+                .sorted(Collator.getInstance(Locale.CHINA))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<InboundSummaryGroupVO> summarizeByMaterial(MaterialDocQueryDTO query) {
+        QueryWrapper<ProductionInbound> wrapper = filterOnly(query)
+                .select("material_code", "material_name", "SUM(inbound_qty) AS qty")
+                .groupBy("material_code", "material_name")
+                // 排序键用普通列（MyBatis-Plus 的 orderBy* 是把字符串原样拼进 ORDER BY 的）；
+                // 按名称、编码排就是为了结果确定，前端拿到后本来还要按名称排一次
+                .orderByAsc("material_name").orderByAsc("material_code");
+
+        return baseMapper.selectMaps(wrapper).stream()
+                .map(this::toGroupVO)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * selectMaps 的结果集（列标签 → 值）转成聚合行。
+     *
+     * <p>分组键里的 null 用空串兜底（与改造前前端 {@code String(x ?? '')} 同口径），
+     * 否则前端 Map 的 key 会变成字符串 "null"。
+     */
+    private InboundSummaryGroupVO toGroupVO(Map<String, Object> row) {
+        InboundSummaryGroupVO vo = new InboundSummaryGroupVO();
+        vo.setMaterialCode(trimToEmpty(row.get("material_code")));
+        vo.setMaterialName(trimToEmpty(row.get("material_name")));
+        // SUM 在「该组所有 inbound_qty 都是 NULL」时回 NULL，不是 0
+        Object qty = row.get("qty");
+        vo.setInboundQty(qty == null ? BigDecimal.ZERO : new BigDecimal(qty.toString()));
+        return vo;
+    }
+
+    private String trimToEmpty(Object value) {
+        return value == null ? "" : value.toString().trim();
+    }
+
+    /**
+     * 只带筛选条件（日期区间 + 物料名称 / 编码 / 单据号）的 wrapper，不带排序。
+     *
+     * <p>抽出来是因为三个查询条件完全相同、只有「排序」和「取哪些列」不同。
+     *
+     * <p>日期用 {@code ge}/{@code le} 而不是字符串比较：DATE 列走原生比较，
+     * 顺便把 {@code inbound_date} 为 NULL 的行排除掉 —— 与改造前前端
+     * {@code if (!inboundDate) return false} 的口径一致（这条**和周统计相反**，那边设计上要计入，
+     * 见 {@code WeeklyStatsServiceImpl#inRange}，别把两者的口径「统一」掉）。
+     */
+    private QueryWrapper<ProductionInbound> filterOnly(MaterialDocQueryDTO query) {
+        QueryWrapper<ProductionInbound> wrapper = new QueryWrapper<>();
+        LocalDate start = query.parsedStartDate();
+        LocalDate end = query.parsedEndDate();
+        if (start != null) {
+            wrapper.ge("inbound_date", start);
+        }
+        if (end != null) {
+            wrapper.le("inbound_date", end);
+        }
+        if (StringUtils.hasText(query.getMaterialName())) {
+            wrapper.eq("material_name", query.getMaterialName().trim());
+        }
+        if (StringUtils.hasText(query.getMaterialCode())) {
+            wrapper.eq("material_code", query.getMaterialCode().trim());
+        }
+        if (StringUtils.hasText(query.getDocumentNo())) {
+            wrapper.eq("document_no", query.getDocumentNo().trim());
+        }
+        return wrapper;
+    }
+
+    /** 只带日期区间的 wrapper —— 给「物料名称候选」用，理由见 {@link #listMaterialNames} */
+    private QueryWrapper<ProductionInbound> dateRangeOnly(DateRangeQueryDTO query) {
+        QueryWrapper<ProductionInbound> wrapper = new QueryWrapper<>();
+        LocalDate start = query.parsedStartDate();
+        LocalDate end = query.parsedEndDate();
+        if (start != null) {
+            wrapper.ge("inbound_date", start);
+        }
+        if (end != null) {
+            wrapper.le("inbound_date", end);
+        }
+        return wrapper;
     }
 
     @Override

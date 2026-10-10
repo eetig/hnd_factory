@@ -2,15 +2,15 @@ package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.example.dto.ImportSaveOutcome;
+import org.example.dto.MaterialStockQueryDTO;
 import org.example.dto.MaterialStockVO;
-import org.example.entity.MaterialMaster;
 import org.example.entity.MaterialStock;
 import org.example.mapper.MaterialStockMapper;
-import org.example.service.MaterialMasterService;
 import org.example.service.MaterialStockService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -18,8 +18,6 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,66 +28,25 @@ import java.util.stream.Collectors;
 public class MaterialStockServiceImpl extends ServiceImpl<MaterialStockMapper, MaterialStock>
         implements MaterialStockService {
 
-    /** 联查物料名称与规格用 */
-    @Autowired
-    private MaterialMasterService materialMasterService;
-
     @Override
-    public List<MaterialStockVO> listAll() {
-        List<MaterialStock> rows = baseMapper.selectList(new QueryWrapper<MaterialStock>()
-                .orderByAsc("plant_code")
-                .orderByAsc("storage_location")
-                .orderByAsc("material_code"));
+    public IPage<MaterialStockVO> listPage(MaterialStockQueryDTO query) {
+        int pageNum = query.resolvedPageNum();
+        int pageSize = query.resolvedPageSize();
+        boolean onlyInStock = Boolean.TRUE.equals(query.getOnlyInStock());
+        // 空串与纯空白都当「不限」—— 与改造前前端 applyStockFilter 里
+        // `keyword.trim()` 之后判空同口径
+        String keyword = StringUtils.hasText(query.getKeyword()) ? query.getKeyword().trim() : null;
 
-        // 联查主数据：页面要的是主数据里的规范名称与规格（按物料编码取），
-        // 主数据是全量取回后在内存里对（表仅数百行），见 MaterialMasterService#mapFirstByCode
-        Map<String, MaterialMaster> masterByCode = materialMasterService.mapFirstByCode();
+        long total = baseMapper.countStock(keyword, onlyInStock);
+        // total 为 0 时不查明细：翻到越界页码（比如删了最后一页的最后一条）也走这里，
+        // 省一次必然为空的查询
+        List<MaterialStockVO> rows = total == 0
+                ? List.of()
+                : baseMapper.selectStockPage(keyword, onlyInStock, (long) (pageNum - 1) * pageSize, pageSize);
 
-        Set<String> codesWithStock = new HashSet<>();
-        List<MaterialStockVO> result = rows.stream().map(row -> {
-            codesWithStock.add(row.getMaterialCode());
-            MaterialMaster master = masterByCode.get(row.getMaterialCode());
-            MaterialStockVO vo = new MaterialStockVO();
-            vo.setId(row.getId());
-            vo.setPlantCode(row.getPlantCode());
-            vo.setMaterialCode(row.getMaterialCode());
-            // 物料信息分在两处：主数据（规范名称/规格）+ 库存表（SAP 导出的描述/规格型号）。
-            // 显示口径：**主数据优先，没有就回退库存表那份**，两边都没有留 null（前端显示「/」）。
-            // 不回退的话，主数据只覆盖 589 个库存编码里的 30 个 —— 页面会是一片「/」。
-            vo.setMaterialName(firstText(master == null ? null : master.getMaterialName(), row.getMaterialDesc()));
-            vo.setSpec(firstText(master == null ? null : master.getSpec(), row.getSpec()));
-            vo.setStorageLocation(row.getStorageLocation());
-            vo.setStorageDesc(row.getStorageDesc());
-            vo.setUnit(row.getUnit());
-            vo.setStockQty(row.getStockQty());
-            return vo;
-        }).collect(Collectors.toList());
-
-        // 只有主数据、库存汇总里没有的物料也要能查到（使用方口径：搜 V150 时这类物料要出现，
-        // 有编码/名称/规格，库存那几列由前端显示「/」）。
-        // 排在后面：「有库存的」在前，「只有主数据的」在后，扫一眼就知道哪些还没进过库存表。
-        masterByCode.values().stream()
-                .filter(master -> !codesWithStock.contains(master.getMaterialCode()))
-                .sorted(Comparator.comparing(MaterialMaster::getMaterialCode,
-                        Comparator.nullsLast(Comparator.naturalOrder())))
-                .forEach(master -> {
-                    MaterialStockVO vo = new MaterialStockVO();
-                    vo.setMaterialCode(master.getMaterialCode());
-                    vo.setMaterialName(firstText(master.getMaterialName(), null));
-                    vo.setSpec(firstText(master.getSpec(), null));
-                    // 存储地点 / 单位 / 数量 / 存储地点描述 一律留 null —— 这些本来就来自库存表
-                    result.add(vo);
-                });
-
-        return result;
-    }
-
-    /** 取第一个有内容的文本；都没有返回 null（由前端决定显示成什么） */
-    private String firstText(String preferred, String fallback) {
-        if (StringUtils.hasText(preferred)) {
-            return preferred.trim();
-        }
-        return StringUtils.hasText(fallback) ? fallback.trim() : null;
+        Page<MaterialStockVO> page = new Page<>(pageNum, pageSize, total);
+        page.setRecords(rows);
+        return page;
     }
 
     /**

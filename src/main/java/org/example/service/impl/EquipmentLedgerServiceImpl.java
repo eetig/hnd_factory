@@ -2,7 +2,10 @@ package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import org.example.dto.EquipmentLedgerQueryDTO;
 import org.example.dto.EquipmentLedgerVO;
 import org.example.dto.EquipmentSaveDTO;
 import org.example.dto.VesselVO;
@@ -38,7 +41,12 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
      *
      * <p>**不能交给库里的排序规则**：utf8mb4 的排序对汉字是按码点走的，不是拼音 ——
      * 拿「反 / 前 / 三」举例，码点序是 三 &lt; 前 &lt; 反，拼音序是 反 &lt; 前 &lt; 三，
-     * 人扫列表时看不出规律。口径与 {@code /api/tank-level/locations} 对属地下拉一致。
+     * 人扫列表里看不出规律。口径与 {@code /api/tank-level/locations} 对属地下拉一致。
+     *
+     * <p>⚠️ 只有 {@link #search} / {@link #listVessels} 两个「取候选」的接口能用它 ——
+     * 它们的数据量小（几十条）、且不分页。维护页的 {@link #listPage} **不能**用：
+     * 那边分页在 SQL 层做，排序也必须在 SQL 层，所以改用
+     * {@code CONVERT(equipment_name USING gbk)} 取近似拼音序（见该方法的说明）。
      */
     private static final Collator NAME_ORDER = Collator.getInstance(Locale.CHINA);
 
@@ -113,15 +121,34 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
     private static final String MANUAL_SOURCE_SHEET = "manual";
 
     @Override
-    public List<EquipmentLedgerVO> listAll() {
-        // ⚠️ 与 search / listVessels 的口径不同：**停用的行也要返回** ——
-        // 那两个是「给使用者挑东西」（停用的不该出现），这里是「维护」（要能重新启用）
-        List<EquipmentLedgerVO> rows = baseMapper.selectList(null).stream()
-                .map(this::toVO)
-                .collect(Collectors.toList());
-        rows.sort(Comparator.comparing(EquipmentLedgerVO::getEquipmentName, NAME_ORDER)
-                .thenComparing(EquipmentLedgerVO::getId));
-        return rows;
+    public IPage<EquipmentLedgerVO> listPage(EquipmentLedgerQueryDTO query) {
+        QueryWrapper<EquipmentLedger> wrapper = new QueryWrapper<>();
+        // ⚠️ 与 search / listVessels 的默认口径不同：这里**停用的行默认也要返回** ——
+        // 那两个是「给使用者挑东西」（停用的不该出现），这里是「维护」（要能重新启用）。
+        // 只有显式传 onlyEnabled=true 才过滤掉停用的行。
+        if (Boolean.TRUE.equals(query.getOnlyEnabled())) {
+            wrapper.eq("enabled", 1);
+        }
+        if (StringUtils.hasText(query.getKeyword())) {
+            String kw = query.getKeyword().trim();
+            // 五个字段任一含关键字即命中。括号必须显式包住 or 段 ——
+            // 不包的话 or 会与上面的 enabled 条件平级，
+            // 变成「只看启用的 或 名字含关键字」，把停用的行一起带出来
+            wrapper.and(w -> w.like("equipment_code", kw)
+                    .or().like("equipment_name", kw)
+                    .or().like("nickname", kw)
+                    .or().like("spec", kw)
+                    .or().like("workshop", kw));
+        }
+        // 设备名称的**近似拼音序**：GBK 码位序就是中文按拼音排的经典做法，
+        // 用来替代原来那个 Java Collator（分页在 SQL 层做之后，排序也必须落到 SQL 里，
+        // 只在内存里排会让每页的顺序互不一致、甚至漏行重行）。
+        // 与 Collator 的结果在个别字上可能有出入，但比 utf8mb4 默认的码位序（按 Unicode
+        // 编码排，中文出来毫无规律）强得多。id 兜底保证顺序唯一确定。
+        wrapper.orderByAsc("CONVERT(equipment_name USING gbk)").orderByAsc("id");
+
+        Page<EquipmentLedger> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
+        return baseMapper.selectPage(page, wrapper).convert(this::toVO);
     }
 
     @Override

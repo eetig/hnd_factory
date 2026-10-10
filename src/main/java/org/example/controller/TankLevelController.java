@@ -1,9 +1,12 @@
 package org.example.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
-import org.example.dto.ExcelResult;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import jakarta.validation.Valid;
+import org.example.dto.PageResult;
 import org.example.dto.Result;
 import org.example.dto.TankLevelImageVO;
+import org.example.dto.TankLevelQueryDTO;
 import org.example.dto.TankLevelSaveDTO;
 import org.example.dto.TankLevelVO;
 import org.example.service.TankLevelImageService;
@@ -19,8 +22,6 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.List;
 
@@ -45,29 +46,21 @@ public class TankLevelController {
     private TankLevelImageService tankLevelImageService;
 
     /**
-     * 液位记录列表。
+     * 液位记录列表 —— 后端分页 + 后端条件查询。
      *
-     * <p>返回体沿用既有列表接口的 ExcelResult（前端统一读 dataList），
-     * 参数全部可选：不传即不加该条件。
+     * <p>返回体<b>改成了 PageResult</b>：改造前是 {@code ExcelResult}（只有 dataList，
+     * 没有 total）。分页必须有 total —— 否则前端算不出总页数。读接口统一口径，
+     * 与其它列表一致。
+     *
+     * <p>条件过滤早就在服务端（改造前只差分页在前端 {@code slice}），本次只补分页。
+     * {@code pageNum} / {@code pageSize} 必传，缺参回 400（理由见
+     * {@link org.example.dto.PageQueryDTO}）。
      */
     @GetMapping("/list")
-    public ExcelResult<TankLevelVO> list(
-            @RequestParam(value = "startDate", required = false) String startDate,
-            @RequestParam(value = "endDate", required = false) String endDate,
-            @RequestParam(value = "location", required = false) String location,
-            @RequestParam(value = "category", required = false) String category,
-            @RequestParam(value = "keyword", required = false) String keyword) {
-
-        List<TankLevelVO> list = tankLevelRecordService.listRecords(
-                parseDate(startDate), parseDate(endDate), location, category, keyword);
-
-        ExcelResult<TankLevelVO> result = new ExcelResult<>();
-        result.setSuccess(true);
-        result.setMsg("查询成功");
-        result.setDataList(list);
-        result.setTotalRow(list.size());
-        result.setSuccessRow(list.size());
-        return result;
+    public PageResult<TankLevelVO> list(@Valid TankLevelQueryDTO query) {
+        IPage<TankLevelVO> page = tankLevelRecordService.listPage(query);
+        return PageResult.of(page.getRecords(), page.getTotal(),
+                query.resolvedPageNum(), query.resolvedPageSize());
     }
 
     /** 属地下拉选项（来自库中数据，避免前端写死车间名） */
@@ -126,17 +119,8 @@ public class TankLevelController {
     }
 
     /**
-     * 日期参数容错：缺失或格式不对一律当作「不限制」，而不是抛异常。
-     * 前端已按 yyyy-MM-dd 传值，这里兜的是手工调接口与历史脏值。
+     * 日期参数容错已经收进 {@link TankLevelQueryDTO}（继承自 {@code DateRangeQueryDTO}）——
+     * 原来这里那个私有 {@code parseDate} 已删除，不要再加回来：口径散在多处时，
+     * 一处改成「报 400」另一处还是「当不限」，排查起来极难。
      */
-    private LocalDate parseDate(String value) {
-        if (value == null || value.trim().isEmpty()) {
-            return null;
-        }
-        try {
-            return LocalDate.parse(value.trim());
-        } catch (DateTimeParseException e) {
-            return null;
-        }
-    }
 }

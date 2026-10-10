@@ -2,8 +2,11 @@ package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.example.dto.TankLevelImageVO;
+import org.example.dto.TankLevelQueryDTO;
 import org.example.dto.TankLevelSaveDTO;
 import org.example.dto.TankLevelVO;
 import org.example.entity.TankLevelRecord;
@@ -42,23 +45,24 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
     private TankLevelImageService tankLevelImageService;
 
     @Override
-    public List<TankLevelVO> listRecords(LocalDate startDate, LocalDate endDate,
-                                         String location, String category, String keyword) {
+    public IPage<TankLevelVO> listPage(TankLevelQueryDTO query) {
         QueryWrapper<TankLevelRecord> wrapper = new QueryWrapper<>();
+        LocalDate startDate = query.parsedStartDate();
+        LocalDate endDate = query.parsedEndDate();
         if (startDate != null) {
             wrapper.ge("record_date", startDate);
         }
         if (endDate != null) {
             wrapper.le("record_date", endDate);
         }
-        if (StringUtils.hasText(location)) {
-            wrapper.eq("location", location.trim());
+        if (StringUtils.hasText(query.getLocation())) {
+            wrapper.eq("location", query.getLocation().trim());
         }
-        if (StringUtils.hasText(category)) {
-            wrapper.eq("category", category.trim());
+        if (StringUtils.hasText(query.getCategory())) {
+            wrapper.eq("category", query.getCategory().trim());
         }
-        if (StringUtils.hasText(keyword)) {
-            String kw = keyword.trim();
+        if (StringUtils.hasText(query.getKeyword())) {
+            String kw = query.getKeyword().trim();
             // 括号必须显式包住 or 段：否则 or 会与上面的 eq 条件平级，
             // 变成「属地=某车间 或 物料含关键字」，把其它属地的记录一起带出来
             wrapper.and(w -> w.like("material_code", kw)
@@ -69,18 +73,14 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
         // 同一天的记录按属地、容器编号排好，页面「序号」才是稳定可读的顺序
         wrapper.orderByDesc("record_date").orderByAsc("location").orderByAsc("tank_code").orderByAsc("id");
 
-        List<TankLevelRecord> records = baseMapper.selectList(wrapper);
-        if (records.isEmpty()) {
-            return List.of();
-        }
+        Page<TankLevelRecord> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
+        IPage<TankLevelRecord> records = baseMapper.selectPage(page, wrapper);
 
         // 图据一次 IN 查询取回整页再分组，不逐条查 —— 这是列表接口，N+1 会随页数放大
         Map<Long, List<TankLevelImageVO>> imagesByRecord = tankLevelImageService.mapByRecordIds(
-                records.stream().map(TankLevelRecord::getId).collect(Collectors.toList()));
+                records.getRecords().stream().map(TankLevelRecord::getId).collect(Collectors.toList()));
 
-        return records.stream()
-                .map(record -> toVO(record, imagesByRecord.get(record.getId())))
-                .collect(Collectors.toList());
+        return records.convert(record -> toVO(record, imagesByRecord.get(record.getId())));
     }
 
     @Override

@@ -1,9 +1,13 @@
 package org.example.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import jakarta.validation.Valid;
 import org.example.component.ImgUploader;
+import org.example.dto.EquipmentLedgerQueryDTO;
 import org.example.dto.EquipmentLedgerVO;
 import org.example.dto.EquipmentSaveDTO;
+import org.example.dto.PageResult;
 import org.example.dto.Result;
 import org.example.dto.VesselDrawingResult;
 import org.example.dto.VesselVO;
@@ -81,12 +85,24 @@ public class EquipmentLedgerController {
     // ===== 以下三个服务「设备数据维护」页（2026-10-06 起本表不再只读）=====
 
     /**
-     * 台账全表，供维护页列表用。**免登录只读**（同上面的查询接口），但**停用的行也会返回** ——
-     * 维护页要能重新启用它们。
+     * 台账列表，供维护页用 —— 后端分页 + 后端关键字 / 启用状态筛选。
+     *
+     * <p>改造前是「全表返回、前端本地搜索、前端分段渲染」（原注释：「源台账 91 行、
+     * 将来也就几百行……分页反而碍事」）。2026-10-10 的统一整改把这条一并否掉了。
+     * 前端因此要把「显示更多」改成「取下一页并追加」。
+     *
+     * <p>返回体同时从 {@code Result<List<...>>}（塞在 {@code data} 里）改成
+     * {@code PageResult}（{@code dataList} + {@code total}）—— 分页必须有 total，
+     * 也顺带与其它列表接口统一口径。
+     *
+     * <p>仍然**免登录只读**（本前缀不在 {@code SaTokenConfigure} 的 admin 闸门里，
+     * 与 /api/stock、/api/tank-level 同级）；写接口照旧带 {@code equipment:edit}。
      */
     @GetMapping("/ledger/list")
-    public Result<List<EquipmentLedgerVO>> ledgerList() {
-        return Result.success(equipmentLedgerService.listAll());
+    public PageResult<EquipmentLedgerVO> ledgerList(@Valid EquipmentLedgerQueryDTO query) {
+        IPage<EquipmentLedgerVO> page = equipmentLedgerService.listPage(query);
+        return PageResult.of(page.getRecords(), page.getTotal(),
+                query.resolvedPageNum(), query.resolvedPageSize());
     }
 
     /**

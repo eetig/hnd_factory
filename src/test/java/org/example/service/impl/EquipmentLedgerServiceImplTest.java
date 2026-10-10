@@ -4,10 +4,14 @@ import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.example.dto.EquipmentLedgerQueryDTO;
 import org.example.dto.EquipmentLedgerVO;
 import org.example.dto.EquipmentSaveDTO;
+import org.example.dto.PageQueryDTO;
 import org.example.dto.VesselVO;
 import org.example.entity.EquipmentLedger;
 import org.example.mapper.EquipmentLedgerMapper;
@@ -309,18 +313,99 @@ class EquipmentLedgerMaintenanceTest {
     }
 
     @Test
-    @DisplayName("列表：停用的行也要返回（维护页要能重新启用）")
-    void listAllKeepsDisabledRows() {
+    @DisplayName("维护页列表：默认**不**排除停用的行（停用的要能重新启用），也不带关键字条件")
+    void listPageKeepsDisabledRowsByDefault() {
         EquipmentLedger disabled = new EquipmentLedger();
         disabled.setId(9L);
         disabled.setEquipmentName("停用的罐");
         disabled.setEnabled(0);
-        when(baseMapper.selectList(any())).thenReturn(List.of(disabled));
+        stubSelectPage(List.of(disabled));
 
-        List<EquipmentLedgerVO> rows = service.listAll();
+        IPage<EquipmentLedgerVO> page = service.listPage(ledgerQuery(1, null, null));
 
-        assertEquals(1, rows.size());
-        // 与 search / listVessels 不同：那两个要排掉停用的行，这个不能排
-        verify(baseMapper).selectList(isNull());
+        ArgumentCaptor<QueryWrapper<EquipmentLedger>> captor = wrapperCaptor();
+        verify(baseMapper).selectPage(any(), captor.capture());
+        String sql = captor.getValue().getSqlSegment();
+
+        // 与 search / listVessels 不同：那两个要排掉停用的行，这个不能排 ——
+        // 排掉之后维护页就再也启用不回来了（页面上根本看不到那一行）
+        assertFalse(sql.contains("enabled"), "默认不该过滤启用状态：" + sql);
+        assertFalse(sql.contains("LIKE"), "没给关键字时不该有模糊条件：" + sql);
+        assertEquals(1, page.getRecords().size());
+        assertEquals(1L, page.getTotal());
+    }
+
+    @Test
+    @DisplayName("维护页列表：显式要求「只看启用的」才加上 enabled 条件")
+    void listPageFiltersEnabledWhenAsked() {
+        stubSelectPage(List.of());
+
+        service.listPage(ledgerQuery(1, true, null));
+
+        ArgumentCaptor<QueryWrapper<EquipmentLedger>> captor = wrapperCaptor();
+        verify(baseMapper).selectPage(any(), captor.capture());
+        String sql = captor.getValue().getSqlSegment();
+
+        assertTrue(sql.contains("enabled"), "只看启用时必须带上 enabled 条件：" + sql);
+    }
+
+    @Test
+    @DisplayName("维护页列表：关键字命中五个字段（漏一列就会「明明有这个设备却搜不到」）")
+    void listPageKeywordCoversAllFiveColumns() {
+        stubSelectPage(List.of());
+
+        service.listPage(ledgerQuery(1, true, "三甲"));
+
+        ArgumentCaptor<QueryWrapper<EquipmentLedger>> captor = wrapperCaptor();
+        verify(baseMapper).selectPage(any(), captor.capture());
+        String sql = captor.getValue().getSqlSegment();
+
+        for (String column : List.of("equipment_code", "equipment_name", "nickname", "spec", "workshop")) {
+            assertTrue(sql.contains(column), "关键字漏了 " + column + " 列：" + sql);
+        }
+        // 括号：不包的话 or 会与 enabled 条件平级，变成「只看启用的 或 名字含关键字」，
+        // 停用的行会被一起带出来
+        assertTrue(sql.contains("("), "or 段必须被括号包住：" + sql);
+    }
+
+    @Test
+    @DisplayName("维护页列表：分页参数按归一化后的值传给查询（页码越界回第 1 页、条数超上限截断）")
+    void listPagePassesNormalizedPaging() {
+        stubSelectPage(List.of());
+
+        EquipmentLedgerQueryDTO query = ledgerQuery(0, null, null);
+        query.setPageSize(9999);
+        service.listPage(query);
+
+        ArgumentCaptor<IPage<EquipmentLedger>> captor = ArgumentCaptor.forClass(IPage.class);
+        verify(baseMapper).selectPage(captor.capture(), any());
+        assertEquals(1L, captor.getValue().getCurrent(), "页码 0 应当归一到第 1 页");
+        assertEquals((long) PageQueryDTO.MAX_PAGE_SIZE, captor.getValue().getSize(),
+                "pageSize 超上限必须截断，否则手搓一个大值就能把全表拉回来");
+    }
+
+    private static EquipmentLedgerQueryDTO ledgerQuery(Integer pageNum, Boolean onlyEnabled, String keyword) {
+        EquipmentLedgerQueryDTO query = new EquipmentLedgerQueryDTO();
+        query.setPageNum(pageNum);
+        query.setPageSize(20);
+        query.setOnlyEnabled(onlyEnabled);
+        query.setKeyword(keyword);
+        return query;
+    }
+
+    private void stubSelectPage(List<EquipmentLedger> rows) {
+        // selectPage 是 BaseMapper 上的 default 方法（内部自己去调 selectList），
+        // Mockito 不执行真实的默认实现 —— 不打桩它会返回 null，测试直接 NPE。
+        when(baseMapper.selectPage(any(), any())).thenAnswer(invocation -> {
+            IPage<EquipmentLedger> page = invocation.getArgument(0);
+            page.setRecords(rows);
+            page.setTotal(rows.size());
+            return page;
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ArgumentCaptor<QueryWrapper<EquipmentLedger>> wrapperCaptor() {
+        return ArgumentCaptor.forClass(QueryWrapper.class);
     }
 }

@@ -1,9 +1,10 @@
 package org.example.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import org.example.dto.TankLevelQueryDTO;
 import org.example.dto.TankLevelSaveDTO;
 import org.example.dto.TankLevelVO;
 
-import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -20,17 +21,13 @@ import java.util.List;
 public interface TankLevelRecordService {
 
     /**
-     * 按条件查询液位记录，返回全部命中行（分页由前端本地完成，
-     * 与 /api/pick/list、/api/inbound/list 的既有约定一致）。
+     * 按条件分页查询液位记录。
      *
-     * @param startDate 记录日期起（含），null 表示不限
-     * @param endDate   记录日期止（含），null 表示不限
-     * @param location  属地精确匹配，空白表示不限
-     * @param category  所属（产品/原料）精确匹配，空白表示不限
-     * @param keyword   关键字，模糊匹配 物料编码/物料名称/容器名称/容器编号，空白表示不限
+     * <p>改造前这个方法返回**全部命中行**、分页由前端 {@code slice} 完成。注意它和
+     * 领料/入库那两条不一样 —— 那两条是「全量拉回来再本地过滤」，这条的**条件过滤早就在
+     * 服务端**了，所以只是「补上分页」，筛选逻辑没动。
      */
-    List<TankLevelVO> listRecords(LocalDate startDate, LocalDate endDate,
-                                  String location, String category, String keyword);
+    IPage<TankLevelVO> listPage(TankLevelQueryDTO query);
 
     /** 属地下拉选项：库里实际出现过的值，按中文习惯排序（不用写死字典） */
     List<String> listLocations();

@@ -1,5 +1,7 @@
 package org.example.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import org.example.dto.EquipmentLedgerQueryDTO;
 import org.example.dto.EquipmentLedgerVO;
 import org.example.dto.EquipmentSaveDTO;
 import org.example.dto.VesselVO;
@@ -42,13 +44,21 @@ public interface EquipmentLedgerService {
     // ===== 以下三个服务「设备数据维护」页（2026-10-06 起本表不再只读）=====
 
     /**
-     * 台账全表，供维护页列表用。
+     * 台账列表（维护页用）：后端分页 + 后端关键字/启用状态筛选。
      *
-     * <p>不分页：源台账 91 行、将来也就几百行；维护页要「逐个设备对比确认」，
-     * 分页反而碍事（翻页时看不全同一车间的同类设备）。排序同 {@link #search} 的拼音序。
-     * 停用的行**也要返回**（维护页要能重新启用）。
+     * <p>⚠️ 改造前是 {@link #listAll}「全表返回、前端本地搜索 + 前端分段渲染」，
+     * 当时的理由是「源台账 91 行、将来也就几百行；维护页要逐个设备对比确认，分页反而碍事」。
+     * 那条理由被 2026-10-10 的统一整改推翻了：列表一律后端分页 + 后端条件查询。
+     * 前端因此改成「显示更多 = 取下一页并追加」，而不是一次渲染 20 张卡片。
+     *
+     * <p>停用的行默认**仍然返回**（维护页要能重新启用）—— 要看「只有启用的」就传
+     * {@code onlyEnabled=true}。
+     *
+     * <p>排序按设备名称的**近似拼音序**（{@code CONVERT(equipment_name USING gbk)}）。
+     * 原来那个 Java {@code Collator} 排序必须换成 SQL 排序：分页在 SQL 层做，
+     * 排序就不能只在内存里做，否则每页的顺序互相不一致、还会漏行重行。
      */
-    List<EquipmentLedgerVO> listAll();
+    IPage<EquipmentLedgerVO> listPage(EquipmentLedgerQueryDTO query);
 
     /**
      * 保存一行：{@code id} 为空则新增，非空则更新。

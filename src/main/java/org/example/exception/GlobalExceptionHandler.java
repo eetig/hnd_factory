@@ -8,6 +8,7 @@ import org.example.dto.ExcelResult;
 import org.example.dto.Result;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.BindException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -47,6 +48,31 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public Result<Void> handleBusiness(BusinessException e) {
         return Result.error(500, e.getMessage());
+    }
+
+    /**
+     * 入参校验失败（{@code @Valid} 挂在查询 DTO / 请求体上时）。
+     *
+     * <p>目前只有一处会走到：列表接口的 {@link org.example.dto.PageQueryDTO} 要求
+     * {@code pageNum} / {@code pageSize} 必传（见该类的注释 —— 老版 App 不带分页参数，
+     * 给默认值会让它安静地只拿到第 1 页，比 400 难排查得多）。
+     *
+     * <p>校验失败的是**协议**而不是业务，所以回 HTTP 400，并且用与其它错误一致的
+     * ExcelResult 形状（前端统一读 {@code msg}），而不是 Spring 默认那坨 Whitelabel 错误页。
+     *
+     * <p>注意 {@code MethodArgumentNotValidException} 是 {@link BindException} 的子类，
+     * 所以这一个处理器同时覆盖「查询参数绑定」（@ModelAttribute）与
+     * 「请求体校验」（@Valid @RequestBody）两种情况 —— 后者本工程现在没用，将来加了也一并管住。
+     */
+    @ExceptionHandler(BindException.class)
+    public ResponseEntity<ExcelResult<Void>> handleBind(BindException e) {
+        String msg = e.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(error -> error.getDefaultMessage() == null
+                        ? error.getField() + " 参数不合法"
+                        : error.getDefaultMessage())
+                .orElse("请求参数不合法");
+        return build(HttpStatus.BAD_REQUEST, msg);
     }
 
     private ResponseEntity<ExcelResult<Void>> build(HttpStatus status, String msg) {

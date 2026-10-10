@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+  「物料查询」页的分页查询。
+
+  这一页的数据**不是一张表**，而是两个来源合并出来的（原实现见 MaterialStockServiceImpl#listAll
+  的注释）：
+    ① material_stock 里的库存行，物料名称 / 规格「主数据优先、回退库存表那一份」；
+    ② 只有主数据、库存汇总里没有的物料，补在后面（使用方口径：搜 V150 时这类物料要出现，
+       有编码/名称/规格，库存那几列由前端显示「/」）。
+  改造前是把两张表都全量取到内存里合并 + 本地筛选分页，所以合并逻辑写在 Java 里。
+  现在合并、筛选、排序、分页全部落到这一条 SQL —— 不再往客户端送全表。
+-->
+<mapper namespace="org.example.mapper.MaterialStockMapper">
+
+    <!--
+      每个物料编码只取一条主数据：启用的优先，其次 id 小的。
+
+      与 MaterialMasterServiceImpl#mapFirstByCode 的 prefer() 同口径，**必须一致** ——
+      material_master 的唯一键是 (material_code, material_name)，也就是「同一编码可以有多个名称」
+      （源数据里 114002501 就同时对应两个不同物料）。直接 LEFT JOIN 主数据会让库存行按
+      主数据行数**翻倍**，分页条数与 total 跟着一起失真。
+    -->
+    <sql id="firstMasterPerCode">
+        SELECT m.id, m.material_code, m.material_name, m.spec
+        FROM material_master m
+        WHERE m.id = (SELECT m2.id
+                      FROM material_master m2
+                      WHERE m2.material_code = m.material_code
+                      ORDER BY (m2.enabled = 1) DESC, m2.id ASC
+                      LIMIT 1)
+    </sql>
+
+    <!--
+      双源合并。列别名一律写成下划线形式 —— 由 application.yml 的
+      map-underscore-to-camel-case 映射到 MaterialStockVO 的属性上。
+
+      「主数据优先、回退库存表」用 COALESCE(NULLIF(TRIM(x), ''), ...) 而不是裸 COALESCE：
+      原 Java 的 firstText() 用 hasText 判断，**空串与纯空白都算「没有」**，
+      而裸 COALESCE 只跳 NULL —— 主数据里存了个空串时它会「兜住」空串、不再回退，
+      页面上就显示成空白而不是库存表那份描述。
+
+      master_only 只用于排序（库存行在前、只有主数据的行在后），VO 上没有这个属性，
+      MyBatis 会忽略它。
+    -->
+    <sql id="stockUnion">
+        SELECT s.id                                        AS id,
+               s.plant_code                                AS plant_code,
+               s.material_code                             AS material_code,
+               COALESCE(NULLIF(TRIM(mm.material_name), ''), NULLIF(TRIM(s.material_desc), ''))
+                                                           AS material_name,
+               COALESCE(NULLIF(TRIM(mm.spec), ''), NULLIF(TRIM(s.spec), ''))
+                                                           AS spec,
+               s.storage_location                          AS storage_location,
+               s.storage_desc                              AS storage_desc,
+               s.unit                                      AS unit,
+               s.stock_qty                                 AS stock_qty,
+               0                                           AS master_only
+        FROM material_stock s
+                 LEFT JOIN (<include refid="firstMasterPerCode"/>) mm
+                           ON mm.material_code = s.material_code
+
+        UNION ALL
+
+        SELECT NULL,
+               NULL,
+               mm.material_code,
+               NULLIF(TRIM(mm.material_name), ''),
+               NULLIF(TRIM(mm.spec), ''),
+               NULL,
+               NULL,
+               NULL,
+               NULL,
+               1
+        FROM (<include refid="firstMasterPerCode"/>) mm
+        WHERE NOT EXISTS (SELECT 1 FROM material_stock s2 WHERE s2.material_code = mm.material_code)
+    </sql>
+
+    <!--
+      筛选条件作用在**合并之后**的派生表 t 上：关键字要能命中「主数据带出来的名称/规格」，
+      所以不能只筛 material_stock 自己那两列。
+
+      关键字大小写：库的排序规则是 _ci（不区分大小写），LIKE 天然满足
+      改造前前端 toLowerCase 的效果，不必再 CONCAT LOWER(...)。
+    -->
+    <sql id="stockFilter">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (t.material_code LIKE CONCAT('%', #{keyword}, '%')
+                OR t.material_name LIKE CONCAT('%', #{keyword}, '%')
+                OR t.spec LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="onlyInStock">
+                AND t.stock_qty &gt; 0
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectStockPage" resultType="org.example.dto.MaterialStockVO">
+        SELECT t.*
+        FROM (<include refid="stockUnion"/>) t
+        <include refid="stockFilter"/>
+        <!-- 排序：库存行在前、只有主数据的行在后；各自按原来的列序。
+             只有主数据的行 plant_code / storage_location 都是 NULL，
+             于是它们实际是按 material_code 排的 —— 与改造前 Java 里
+             「masterByCode.values() 按 material_code 排序后追加」的结果一致。 -->
+        ORDER BY t.master_only ASC,
+                 t.plant_code ASC,
+                 t.storage_location ASC,
+                 t.material_code ASC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="countStock" resultType="long">
+        SELECT COUNT(*)
+        FROM (<include refid="stockUnion"/>) t
+        <include refid="stockFilter"/>
+    </select>
+
+</mapper>

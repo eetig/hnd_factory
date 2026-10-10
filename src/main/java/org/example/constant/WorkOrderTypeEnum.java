@@ -49,4 +49,18 @@ public enum WorkOrderTypeEnum {
         }
         return null;
     }
+
+    // 工单号前缀 -> 类型；识别不出返回 null
+    public static WorkOrderTypeEnum byPrefix(String prefix) {
+        if (prefix == null) {
+            return null;
+        }
+        String p = prefix.trim();
+        for (WorkOrderTypeEnum t : values()) {
+            if (t.prefix.equals(p)) {
+                return t;
+            }
+        }
+        return null;
+    }
 }

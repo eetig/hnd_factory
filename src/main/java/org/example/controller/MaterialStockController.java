@@ -1,8 +1,11 @@
 package org.example.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
-import org.example.dto.ExcelResult;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import jakarta.validation.Valid;
+import org.example.dto.MaterialStockQueryDTO;
 import org.example.dto.MaterialStockVO;
+import org.example.dto.PageResult;
 import org.example.dto.Result;
 import org.example.entity.MaterialStock;
 import org.example.service.MaterialStockService;
@@ -35,17 +38,22 @@ public class MaterialStockController {
     @Autowired
     private MaterialStockService materialStockService;
 
-    /** 全量返回，排序 / 筛选 / 分页由前端本地完成；物料名称与规格联查 material_master 带出 */
+    /**
+     * 「物料查询」页列表 —— 后端分页 + 后端关键字 / 库存筛选。
+     *
+     * <p>改造前是「全量返回，排序 / 筛选 / 分页由前端本地完成」（原注释）。
+     * 这一页的数据是 material_stock 与 material_master 的**双源合并**（「只有主数据、
+     * 库存里没有」的物料也要能搜到），合并与筛选现在都在 SQL 里做，
+     * 见 {@code resources/mapper/MaterialStockMapper.xml}。
+     *
+     * <p>{@code pageNum} / {@code pageSize} 必传，缺参回 400（理由见
+     * {@link org.example.dto.PageQueryDTO}）。
+     */
     @GetMapping("/list")
-    public ExcelResult<MaterialStockVO> list() {
-        List<MaterialStockVO> list = materialStockService.listAll();
-        ExcelResult<MaterialStockVO> result = new ExcelResult<>();
-        result.setSuccess(true);
-        result.setMsg("查询成功");
-        result.setDataList(list);
-        result.setTotalRow(list.size());
-        result.setSuccessRow(list.size());
-        return result;
+    public PageResult<MaterialStockVO> list(@Valid MaterialStockQueryDTO query) {
+        IPage<MaterialStockVO> page = materialStockService.listPage(query);
+        return PageResult.of(page.getRecords(), page.getTotal(),
+                query.resolvedPageNum(), query.resolvedPageSize());
     }
 
     @SaCheckPermission("work_order:import")

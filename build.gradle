@@ -40,6 +40,13 @@ dependencies {
     implementation 'org.springframework.cloud:spring-cloud-starter-loadbalancer'
     // MyBatis Plus SpringBoot3专用
     implementation 'com.baomidou:mybatis-plus-spring-boot3-starter:3.5.17'
+    // 分页插件 PaginationInnerInterceptor **不在**上面那个 starter 里：MyBatis-Plus 自 3.5.9 起
+    // 把依赖 JSqlParser 的插件（分页、多租户、数据权限…）拆到了独立模块，
+    // mybatis-plus-extension 里只剩不需要解析 SQL 的那几个 InnerInterceptor。
+    // 少了它 selectPage 不会生成 LIMIT —— 不报错，只是把全表又查回来，
+    // 表现成「分页器显示第 1/1 页、一页却有几百条」。见 config/MybatisPlusConfig。
+    // 版本必须与 starter 对齐，否则两个 MP 版本的类会同时躺在 classpath 上。
+    implementation 'com.baomidou:mybatis-plus-jsqlparser:3.5.17'
     // MySQL驱动
     implementation 'com.mysql:mysql-connector-j'
     // Lombok

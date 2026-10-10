@@ -1,11 +1,16 @@
 package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.example.constant.MovementTypeEnum;
+import org.example.dto.DateRangeQueryDTO;
 import org.example.dto.ExcelResult;
 import org.example.dto.GoodsMoveExcelDTO;
+import org.example.dto.GoodsMoveSummaryVO;
 import org.example.dto.GoodsMoveVO;
+import org.example.dto.PageQueryDTO;
 import org.example.dto.WorkOrderImportSaveVO;
 import org.example.entity.MaterialMovement;
 import org.example.feign.ExcelParseFeign;
@@ -87,19 +92,58 @@ public class MaterialMovementServiceImpl extends ServiceImpl<MaterialMovementMap
 
     // ================= 货物移动列表 =================
     @Override
-    public ExcelResult<GoodsMoveVO> listGoodsMoves() {
-        List<MaterialMovement> list = baseMapper.selectList(
-                new QueryWrapper<MaterialMovement>().orderByDesc("posting_date").orderByDesc("id"));
+    public IPage<GoodsMoveVO> listPage(PageQueryDTO query) {
+        Page<MaterialMovement> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
+        return baseMapper.selectPage(page, dateRangeOnly(query)
+                        .orderByDesc("posting_date").orderByDesc("id"))
+                .convert(this::toGoodsMoveVO);
+    }
 
-        List<GoodsMoveVO> vos = list.stream().map(this::toGoodsMoveVO).collect(Collectors.toList());
+    @Override
+    public List<GoodsMoveSummaryVO> summarizeByMaterial(DateRangeQueryDTO query) {
+        // 按 (物料编码 + 来源库位) 分组：派生行要按来源库位单独取数，只按物料汇总就算不出来了
+        QueryWrapper<MaterialMovement> wrapper = dateRangeOnly(query)
+                .select("material_code", "storage_location", "SUM(quantity) AS move_qty")
+                .groupBy("material_code", "storage_location")
+                .orderByAsc("material_code").orderByAsc("storage_location");
 
-        ExcelResult<GoodsMoveVO> result = new ExcelResult<>();
-        result.setSuccess(true);
-        result.setMsg("操作成功");
-        result.setDataList(vos);
-        result.setTotalRow(vos.size());
-        result.setSuccessRow(vos.size());
-        return result;
+        return baseMapper.selectMaps(wrapper).stream().map(row -> {
+            GoodsMoveSummaryVO vo = new GoodsMoveSummaryVO();
+            vo.setMaterialCode(trimToEmpty(row.get("material_code")));
+            vo.setFromLocation(trimToEmpty(row.get("storage_location")));
+            // SUM 在「该组所有 quantity 都是 NULL」时回 NULL，不是 0
+            Object qty = row.get("move_qty");
+            // 保留符号：SAP 原样，正数入库、负数出库/消耗。
+            // 改造前前端是拿到明细后自己 Math.abs 的，取绝对值那一步留在前端（口径在那边）
+            vo.setMoveQty(qty == null ? BigDecimal.ZERO : new BigDecimal(qty.toString()));
+            return vo;
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * 只带日期区间（按**过账日期**）的 wrapper。
+     *
+     * <p>用 {@code ge}/{@code le} 而不是字符串比较：DATE 列走原生比较，且顺带把
+     * {@code posting_date} 为 NULL 的行排除掉 —— 与改造前前端
+     * {@code moveDate ? 区间判断 : true}（无日期字段的行放行）**不同**。
+     * 那条「字段缺失就不过滤」的兜底是为了容忍后端没返回该字段，
+     * 现在字段由本方法自己过滤、一定存在，兜底只会让没有过账日期的脏行混进结果。
+     */
+    private QueryWrapper<MaterialMovement> dateRangeOnly(DateRangeQueryDTO query) {
+        QueryWrapper<MaterialMovement> wrapper = new QueryWrapper<>();
+        LocalDate start = query.parsedStartDate();
+        LocalDate end = query.parsedEndDate();
+        if (start != null) {
+            wrapper.ge("posting_date", start);
+        }
+        if (end != null) {
+            wrapper.le("posting_date", end);
+        }
+        return wrapper;
+    }
+
+    private String trimToEmpty(Object value) {
+        return value == null ? "" : value.toString().trim();
     }
 
     private GoodsMoveVO toGoodsMoveVO(MaterialMovement m) {
