@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.example.dto.DateRangeQueryDTO;
+import org.example.dto.DocumentRowVO;
 import org.example.dto.MaterialDocQueryDTO;
 import org.example.dto.PickSummaryGroupVO;
 import org.example.dto.PickSummaryVO;
@@ -12,7 +13,7 @@ import org.example.dto.WorkOrderImportSaveVO;
 import org.example.entity.MaterialPickSummary;
 import org.example.mapper.MaterialPickSummaryMapper;
 import org.example.service.MaterialPickSummaryService;
-import org.example.util.DocMaterialKey;
+import org.example.util.DocMaterialDateKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,9 +41,13 @@ public class MaterialPickSummaryServiceImpl extends ServiceImpl<MaterialPickSumm
     private String imageBaseUrl;
 
     /**
-     * 按 (单据号 + 物料编码) upsert：存在则更新，不存在则新增。
-     * 同一张单据下可以有多条不同物料的明细，因此单据号单独不唯一。
+     * 按 (单据号 + 物料编码 + 日期) upsert：存在则更新，不存在则新增。
+     * 同一张单据下可以有多条不同物料、或同物料不同日期的明细，因此单据号单独不唯一。
      * 同批内组合键重复时后者覆盖前者（避免批内自冲突触发唯一键异常）。
+     *
+     * <p>变更-047 起键里加了日期（D4：同单据同物料不同日期各存一行），与库表唯一键
+     * {@code uk_document_no_material_date} 一一对应；日期为 NULL 时归一成空串参与比对，
+     * 与唯一索引「不约束 NULL」的缺口在应用层对齐（见 {@link DocMaterialDateKey}）。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -55,7 +60,7 @@ public class MaterialPickSummaryServiceImpl extends ServiceImpl<MaterialPickSumm
         // 批内按组合键去重，后者覆盖前者
         Map<String, MaterialPickSummary> unique = new LinkedHashMap<>();
         for (MaterialPickSummary p : list) {
-            unique.put(DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode()), p);
+            unique.put(DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getPickDate()), p);
         }
         List<MaterialPickSummary> rows = new ArrayList<>(unique.values());
 
@@ -64,12 +69,12 @@ public class MaterialPickSummaryServiceImpl extends ServiceImpl<MaterialPickSumm
                 .map(MaterialPickSummary::getDocumentNo)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
-        Map<String, Long> idMap = findIdByDocAndMaterial(docs);
+        Map<String, Long> idMap = findIdByDocMaterialDate(docs);
 
         List<MaterialPickSummary> toInsert = new ArrayList<>();
         List<MaterialPickSummary> toUpdate = new ArrayList<>();
         for (MaterialPickSummary p : rows) {
-            Long id = idMap.get(DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode()));
+            Long id = idMap.get(DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getPickDate()));
             if (id == null) {
                 toInsert.add(p);
             } else {
@@ -91,24 +96,24 @@ public class MaterialPickSummaryServiceImpl extends ServiceImpl<MaterialPickSumm
     }
 
     @Override
-    public Map<String, Long> findIdByDocAndMaterial(Collection<String> documentNos) {
+    public Map<String, Long> findIdByDocMaterialDate(Collection<String> documentNos) {
         if (documentNos == null || documentNos.isEmpty()) {
             return Map.of();
         }
         return baseMapper.selectList(
                         new QueryWrapper<MaterialPickSummary>()
-                                .select("id", "document_no", "material_code")
+                                .select("id", "document_no", "material_code", "pick_date")
                                 .in("document_no", documentNos))
                 .stream()
                 .filter(p -> StringUtils.hasText(p.getDocumentNo()))
                 .collect(Collectors.toMap(
-                        p -> DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode()),
+                        p -> DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getPickDate()),
                         MaterialPickSummary::getId,
                         (a, b) -> a));
     }
 
     /**
-     * 查已有记录的领料数量，供导入预检判断重复行（单据号+物料编码+数量 三者全同 -> 跳过）。
+     * 查已有记录的领料数量，供导入预检判断重复行（单据号+物料编码+日期+数量 四者全同 -> 跳过）。
      *
      * 这里用 HashMap 手工装填而不是 Collectors.toMap：pick_qty 列可为 null，
      * 而 toMap 底层走 map.merge，value 为 null 会直接抛 NPE。
@@ -116,21 +121,82 @@ public class MaterialPickSummaryServiceImpl extends ServiceImpl<MaterialPickSumm
      * 否则该记录会被误判成「库里不存在」，保存时走 insert 撞唯一键。
      */
     @Override
-    public Map<String, BigDecimal> findQtyByDocAndMaterial(Collection<String> documentNos) {
+    public Map<String, BigDecimal> findQtyByDocMaterialDate(Collection<String> documentNos) {
         if (documentNos == null || documentNos.isEmpty()) {
             return Map.of();
         }
         Map<String, BigDecimal> qtyMap = new HashMap<>();
         for (MaterialPickSummary p : baseMapper.selectList(
                 new QueryWrapper<MaterialPickSummary>()
-                        .select("document_no", "material_code", "pick_qty")
+                        .select("document_no", "material_code", "pick_date", "pick_qty")
                         .in("document_no", documentNos))) {
             if (!StringUtils.hasText(p.getDocumentNo())) {
                 continue;
             }
-            qtyMap.put(DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode()), p.getPickQty());
+            qtyMap.put(DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getPickDate()),
+                    p.getPickQty());
         }
         return qtyMap;
+    }
+
+    /**
+     * 一张单据的全部明细行（变更-047）：序号升序、id 兜底（同 seqNo 的脏数据也有确定序）。
+     *
+     * <p>不过滤、不分页 —— 单据明细是「整体」，前端编辑的也是整体。
+     * 防御性行数上限是变更-047 的遗留项（本轮不设，见文档 §遗留）。
+     */
+    @Override
+    public List<DocumentRowVO> listByDocument(String documentNo) {
+        if (!StringUtils.hasText(documentNo)) {
+            return List.of();
+        }
+        return baseMapper.selectList(new QueryWrapper<MaterialPickSummary>()
+                        .eq("document_no", documentNo.trim())
+                        .select("id", "seq_no", "document_no", "material_name", "material_code",
+                                "pick_qty", "unit", "pick_date", "file_name")
+                        .orderByAsc("seq_no").orderByAsc("id"))
+                .stream().map(this::toDocumentRowVO).collect(Collectors.toList());
+    }
+
+    private DocumentRowVO toDocumentRowVO(MaterialPickSummary p) {
+        DocumentRowVO vo = new DocumentRowVO();
+        vo.setId(p.getId());
+        vo.setSeqNo(p.getSeqNo());
+        vo.setMaterialName(p.getMaterialName());
+        vo.setMaterialCode(p.getMaterialCode());
+        vo.setQty(p.getPickQty());
+        vo.setUnit(p.getUnit());
+        vo.setDate(p.getPickDate());
+        String fileName = p.getFileName();
+        vo.setImageUrl(toUrl(fileName));
+        vo.setThumbnailUrl(toThumbUrl(fileName));
+        vo.setFileName(fileName);
+        return vo;
+    }
+
+    /**
+     * document 模式落库的写入口（变更-047）：一个事务里 <b>先删 → 再更 → 后插</b>。
+     *
+     * <p>先删的理由：用户把某行改成另一个（物料编码+日期）= 删旧行 + 插新行，
+     * 若先插后删，新行会在旧行的唯一键上撞索引，整单失败 —— 顺序反了事务就白做。
+     *
+     * <p>删除是<b>物理删除</b>（本轮口径，见变更-047 §风险与取舍）；
+     * 更新走 {@code updateBatchById}（按主键，行身份由此保住），插入走 {@code saveBatch}。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void applyDocumentChanges(List<MaterialPickSummary> toInsert,
+                                     List<MaterialPickSummary> toUpdate,
+                                     Collection<Long> idsToDelete) {
+        if (idsToDelete != null && !idsToDelete.isEmpty()) {
+            removeByIds(idsToDelete);
+        }
+        if (toUpdate != null && !toUpdate.isEmpty()) {
+            updateBatchById(toUpdate);
+        }
+        if (toInsert != null && !toInsert.isEmpty()) {
+            saveBatch(toInsert);
+        }
     }
 
     @Override

@@ -114,13 +114,16 @@ CREATE TABLE IF NOT EXISTS `material_movement` (
 
 -- ---------------------------------------------------------------------------
 -- 生产入库单（Excel「生产入库」导入）
--- 业务唯一键：(document_no + material_code) —— 同一单据下不同物料是不同记录
+-- 业务唯一键：(document_no + material_code + inbound_date) —— 同一单据下不同物料、
+--   或同物料不同日期，都是不同记录（日期是行身份的一部分，变更-047）
+--   ⚠️ 日期列可为 NULL，而 MySQL 唯一索引不约束 NULL —— 应用层把 NULL 归一成空串
+--      参与比对（DocMaterialDateKey），document 模式另强制行日期非空
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `production_inbound` (
   `id`            bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `seq_no`        int           DEFAULT NULL COMMENT '序号',
-  `document_no`   varchar(32)   DEFAULT NULL COMMENT '单据号（与物料编码组成唯一键）',
-  `inbound_date`  date          DEFAULT NULL COMMENT '日期',
+  `document_no`   varchar(32)   DEFAULT NULL COMMENT '单据号（与物料编码、日期组成唯一键）',
+  `inbound_date`  date          DEFAULT NULL COMMENT '日期（行身份的一部分，唯一键成员）',
   `material_name` varchar(128)  DEFAULT NULL COMMENT '物料名称',
   `material_code` varchar(32)   DEFAULT NULL COMMENT '物料编码',
   `inbound_qty`   decimal(18,4) DEFAULT NULL COMMENT '入库数量',
@@ -129,7 +132,7 @@ CREATE TABLE IF NOT EXISTS `production_inbound` (
   `create_time`   datetime      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time`   datetime      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_document_no_material` (`document_no`,`material_code`),
+  UNIQUE KEY `uk_document_no_material_date` (`document_no`,`material_code`,`inbound_date`),
   KEY `idx_material_code` (`material_code`),
   KEY `idx_inbound_date` (`inbound_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='生产入库单';
@@ -137,13 +140,14 @@ CREATE TABLE IF NOT EXISTS `production_inbound` (
 
 -- ---------------------------------------------------------------------------
 -- 领料汇总（Excel「领料汇总」导入）
--- 业务唯一键：(document_no + material_code)
+-- 业务唯一键：(document_no + material_code + pick_date)
+--   NULL 日期的口径同上（production_inbound 的注释）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `material_pick_summary` (
   `id`            bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `seq_no`        int           DEFAULT NULL COMMENT '序号',
-  `document_no`   varchar(32)   DEFAULT NULL COMMENT '单据号（与物料编码组成唯一键）',
-  `pick_date`     date          DEFAULT NULL COMMENT '日期',
+  `document_no`   varchar(32)   DEFAULT NULL COMMENT '单据号（与物料编码、日期组成唯一键）',
+  `pick_date`     date          DEFAULT NULL COMMENT '日期（行身份的一部分，唯一键成员）',
   `material_name` varchar(128)  DEFAULT NULL COMMENT '物料名称',
   `material_code` varchar(32)   DEFAULT NULL COMMENT '物料编码',
   `pick_qty`      decimal(18,4) DEFAULT NULL COMMENT '领料数量',
@@ -152,7 +156,7 @@ CREATE TABLE IF NOT EXISTS `material_pick_summary` (
   `create_time`   datetime      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time`   datetime      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_document_no_material` (`document_no`,`material_code`),
+  UNIQUE KEY `uk_document_no_material_date` (`document_no`,`material_code`,`pick_date`),
   KEY `idx_material_code` (`material_code`),
   KEY `idx_pick_date` (`pick_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='领料汇总单';
@@ -1171,12 +1175,13 @@ WHERE `container_type` IS NULL;
 -- CREATE TABLE IF NOT EXISTS `material_pick_summary` ( ... ); -- 见第 1 部分
 
 -- -- 3) 生产入库单：新增单据号列，并建立 (单据号+物料编码) 唯一键
+-- --    ⚠️ 2026-10-12 起唯一键已加日期维度（变更-047）：跑完本步的库请接着跑第 17) 步
 -- ALTER TABLE `production_inbound`
 --   ADD COLUMN `document_no` varchar(32) DEFAULT NULL COMMENT '单据号（与物料编码组成唯一键）' AFTER `seq_no`;
 -- ALTER TABLE `production_inbound`
 --   ADD UNIQUE KEY `uk_document_no_material` (`document_no`,`material_code`);
 
--- -- 4) 领料汇总：新增单据号列 + 唯一键
+-- -- 4) 领料汇总：新增单据号列 + 唯一键（同第 3) 步，需接着跑第 17) 步）
 -- ALTER TABLE `material_pick_summary`
 --   ADD COLUMN `document_no` varchar(32) DEFAULT NULL COMMENT '单据号（与物料编码组成唯一键）' AFTER `seq_no`;
 -- ALTER TABLE `material_pick_summary`
@@ -1321,3 +1326,57 @@ WHERE `container_type` IS NULL;
 --
 -- -- 升级后接着跑**第 2 部分的「容器几何参数回填」那一节**（3 条 UPDATE + 再沸器的 INSERT），
 -- -- 它按 (source_sheet, source_row) 定位、可重复执行。
+
+-- -- 17) 单据行唯一键加日期维度：uk_document_no_material → uk_document_no_material_date
+-- --     （变更-047，2026-10-12）
+-- --
+-- --     需求（D4）：同一单据号 + 同一物料编码 + 不同日期必须能各存一行
+-- --     —— 图片识别改为行级日期后，日期成了行身份的一部分，唯一键必须跟上。
+-- --
+-- --     安全性：新键是旧键的**超集**（严格更松），既有数据天然满足；
+-- --     库先于后端迁移也不会破坏旧服务（旧代码不会写同 (单据号,物料编码) 的第二行）。
+-- --
+-- --     ⚠️ 日期列可为 NULL，而 MySQL 唯一索引**不约束 NULL** —— 应用层三键把 NULL
+-- --        归一成空串参与比对（DocMaterialDateKey），document 模式另强制行日期非空；
+-- --        本步骤**不**把日期改成 NOT NULL（历史行要回填，本轮不动）。
+-- --
+-- --     ⚠️ DDL 隐式提交、不可回滚：执行前先做数据备份（_dbfix/DbBackup 导出两表快照），
+-- --        那是唯一的退路。回滚语句附在本步末尾。
+-- --
+-- --     改前核对（只读）：行数基线（记进变更-047 文档的验证记录）。
+-- --     预期：第二个查询两表都应返回 **0 行**（旧键更严，本来就不可能有重复）。
+-- SELECT 'production_inbound' AS tbl, COUNT(*) AS rows_cnt FROM `production_inbound`
+-- UNION ALL
+-- SELECT 'material_pick_summary', COUNT(*) FROM `material_pick_summary`;
+-- SELECT `document_no`, `material_code`, COUNT(*) FROM `production_inbound`
+--  GROUP BY `document_no`, `material_code` HAVING COUNT(*) > 1;
+-- SELECT `document_no`, `material_code`, COUNT(*) FROM `material_pick_summary`
+--  GROUP BY `document_no`, `material_code` HAVING COUNT(*) > 1;
+-- --
+-- ALTER TABLE `production_inbound`
+--   DROP KEY `uk_document_no_material`,
+--   ADD UNIQUE KEY `uk_document_no_material_date` (`document_no`,`material_code`,`inbound_date`);
+-- ALTER TABLE `material_pick_summary`
+--   DROP KEY `uk_document_no_material`,
+--   ADD UNIQUE KEY `uk_document_no_material_date` (`document_no`,`material_code`,`pick_date`);
+-- --
+-- --     列注释同步（注释不影响读写，但不补的话下次看表结构的人会照着旧口径核）：
+-- ALTER TABLE `production_inbound`
+--   MODIFY COLUMN `document_no` varchar(32) DEFAULT NULL COMMENT '单据号（与物料编码、日期组成唯一键）',
+--   MODIFY COLUMN `inbound_date` date DEFAULT NULL COMMENT '日期（行身份的一部分，唯一键成员）';
+-- ALTER TABLE `material_pick_summary`
+--   MODIFY COLUMN `document_no` varchar(32) DEFAULT NULL COMMENT '单据号（与物料编码、日期组成唯一键）',
+--   MODIFY COLUMN `pick_date` date DEFAULT NULL COMMENT '日期（行身份的一部分，唯一键成员）';
+-- --
+-- --     迁移后复核：SHOW INDEX 应出现 uk_document_no_material_date 且旧键消失；行数与基线一致。
+-- --
+-- --     回滚（⚠️ **有损**）：迁移后若已产生「同单据同物料不同日期」的行，旧键装不下，
+-- --     回滚前必须先对账并人工处置（保哪一行由业务定），否则 ADD UNIQUE KEY 直接失败：
+-- --     SELECT `document_no`, `material_code`, COUNT(*) FROM `material_pick_summary`
+-- --      GROUP BY `document_no`, `material_code` HAVING COUNT(*) > 1;   -- 入库表同理
+-- ALTER TABLE `production_inbound`
+--   DROP KEY `uk_document_no_material_date`,
+--   ADD UNIQUE KEY `uk_document_no_material` (`document_no`,`material_code`);
+-- ALTER TABLE `material_pick_summary`
+--   DROP KEY `uk_document_no_material_date`,
+--   ADD UNIQUE KEY `uk_document_no_material` (`document_no`,`material_code`);

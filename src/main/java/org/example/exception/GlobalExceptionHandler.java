@@ -44,6 +44,21 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
+    /**
+     * 单据并发冲突（变更-047）：回业务码 <b>409</b>（HTTP 仍是 200），与普通业务失败区分。
+     *
+     * <p>前端据此自动重查单据并提示「重新载入」；普通 500 文案只做展示。
+     * 之所以要这个兜底映射：{@code OcrConfirmController} 自己也 catch 了它（因为它那里的
+     * 大 catch 会吞异常），但任何**别的**入口（如新加的 detail 接口内部复用校验）抛出的
+     * 冲突都得有统一出口，不能落成 500。
+     *
+     * <p>Note：Spring 选最具体的处理器，本方法优先于下面的 {@link BusinessException} 兜底。
+     */
+    @ExceptionHandler(DocumentConflictException.class)
+    public Result<Void> handleDocumentConflict(DocumentConflictException e) {
+        return Result.error(409, e.getMessage());
+    }
+
     // 业务异常（登录失败、图片上传失败等），返回通用 Result
     @ExceptionHandler(BusinessException.class)
     public Result<Void> handleBusiness(BusinessException e) {

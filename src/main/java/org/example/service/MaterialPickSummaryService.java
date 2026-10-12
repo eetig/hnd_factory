@@ -2,6 +2,7 @@ package org.example.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import org.example.dto.DateRangeQueryDTO;
+import org.example.dto.DocumentRowVO;
 import org.example.dto.MaterialDocQueryDTO;
 import org.example.dto.PickSummaryGroupVO;
 import org.example.dto.PickSummaryVO;
@@ -52,12 +53,39 @@ public interface MaterialPickSummaryService {
      */
     List<PickSummaryVO> listAll();
 
-    // 按 (单据号+物料编码) 查已有记录的 id，用于导入时判断走新增还是更新。
-    // 入参为待查的单据号集合，返回 Map<组合键, id>（同一单据号下的多条物料都会返回）
-    Map<String, Long> findIdByDocAndMaterial(Collection<String> documentNos);
+    // 按 (单据号+物料编码+日期) 查已有记录的 id，用于导入时判断走新增还是更新。
+    // 入参为待查的单据号集合，返回 Map<三键, id>（同一单据号下的多条物料都会返回）。
+    // ⚠️ 键必须用 DocMaterialDateKey.of 生成（变更-047：日期是行身份的一部分，NULL 日期归一空串）
+    Map<String, Long> findIdByDocMaterialDate(Collection<String> documentNos);
 
-    // 按 (单据号+物料编码) 查已有记录的领料数量。
-    // 用于导入预检：单据号、物料编码、数量三者全同即为重复行，整行跳过（不落库也不上传图片）。
-    // 返回 Map<组合键, 领料数量>（同一单据号下的多条物料都会返回）
-    Map<String, BigDecimal> findQtyByDocAndMaterial(Collection<String> documentNos);
+    // 按 (单据号+物料编码+日期) 查已有记录的领料数量。
+    // 用于导入预检：单据号、物料编码、日期、数量四者全同即为重复行，整行跳过（不落库也不上传图片）。
+    // 返回 Map<三键, 领料数量>（同一单据号下的多条物料都会返回）
+    Map<String, BigDecimal> findQtyByDocMaterialDate(Collection<String> documentNos);
+
+    /**
+     * 一张单据的全部明细行（变更-047）—— {@code GET /api/work-order/document/detail}
+     * 与 document 模式落库的差量比对共用。
+     *
+     * <p>排序 {@code seq_no ASC, id ASC}（确定序，前端表格按此展示）。
+     * 返回的 VO <b>带行 id 与日期</b>，这是它与 {@link #listPage} 系列的本质区别：
+     * 列表 VO 没有行身份，撑不起「载入编辑后按行差量保存」。
+     */
+    List<DocumentRowVO> listByDocument(String documentNo);
+
+    /**
+     * document 模式落库的写入口（变更-047）：三件事必须在<b>同一个事务</b>里做，
+     * 且顺序固定 —— <b>先删、再更、后插</b>。
+     *
+     * <p>先删的理由：用户「改掉某行的物料编码」= 删旧行 + 插新行，
+     * 若先插后删会在旧键（现在含日期）上撞唯一索引，事务直接失败。
+     * 删除走物理删除（本轮口径，见变更-047 §风险与取舍）。
+     *
+     * @param toInsert    待新增行（id 必须已清空，seqNo 已按行序重排）
+     * @param toUpdate    待更新行（id 为库中 id，seqNo 已按行序重排）
+     * @param idsToDelete 待删除的库中行 id（可为空集合，不可为 null）
+     */
+    void applyDocumentChanges(List<MaterialPickSummary> toInsert,
+                              List<MaterialPickSummary> toUpdate,
+                              Collection<Long> idsToDelete);
 }

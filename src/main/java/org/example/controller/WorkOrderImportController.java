@@ -28,7 +28,7 @@ import org.example.service.MaterialStockService;
 import org.example.service.ProductionInboundService;
 import org.example.service.WorkOrderService;
 import org.example.util.ExcelCleanUtil;
-import org.example.util.DocMaterialKey;
+import org.example.util.DocMaterialDateKey;
 import org.example.util.GoodsMoveImportUtil;
 import org.example.util.ImportDedupeUtil;
 import org.example.util.InMemoryMultipartFile;
@@ -524,8 +524,8 @@ public class WorkOrderImportController {
 
         // 2) 文件内组合键重复检测
         Set<String> duplicatedInFile = detectInFileDuplicates(
-                candidates.stream().map(p -> DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode())).collect(Collectors.toList()),
-                candidates.stream().map(p -> DocMaterialKey.label(p.getDocumentNo(), p.getMaterialCode())).collect(Collectors.toList()),
+                candidates.stream().map(p -> DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getPickDate())).collect(Collectors.toList()),
+                candidates.stream().map(p -> DocMaterialDateKey.label(p.getDocumentNo(), p.getMaterialCode(), p.getPickDate())).collect(Collectors.toList()),
                 candidateRows, errorRows);
 
         // 3) 查数据库中已有记录的数量
@@ -534,13 +534,13 @@ public class WorkOrderImportController {
                 .map(MaterialPickSummary::getDocumentNo)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
-        Map<String, BigDecimal> dbQty = materialPickSummaryService.findQtyByDocAndMaterial(docs);
+        Map<String, BigDecimal> dbQty = materialPickSummaryService.findQtyByDocMaterialDate(docs);
 
         // 4) 组装预览行（仅文件内重复的行不进预览）
         List<Map<String, Object>> rows = new ArrayList<>();
         for (int i = 0; i < candidates.size(); i++) {
             MaterialPickSummary p = candidates.get(i);
-            String key = DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode());
+            String key = DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getPickDate());
             if (duplicatedInFile.contains(key)) {
                 continue;
             }
@@ -559,7 +559,7 @@ public class WorkOrderImportController {
             row.put("hasDocument", documentId != null);     // 是否带单据图片
             row.put("dispimgId", documentId);               // 单据图 ID，供前端按需取图（变更-002）
             row.put("isUpdate", dbQty.containsKey(key));    // true=更新已有，false=新增
-            // 单据号 + 物料编码 + 数量 三者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
+            // 单据号 + 物料编码 + 日期 + 数量 四者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
             row.put("isDuplicate", dbQty.containsKey(key)
                     && ImportDedupeUtil.isSameQty(dbQty.get(key), p.getPickQty()));
             rows.add(row);
@@ -659,8 +659,8 @@ public class WorkOrderImportController {
 
         // 2) 文件内组合键重复检测
         Set<String> duplicatedInFile = detectInFileDuplicates(
-                candidates.stream().map(p -> DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode())).collect(Collectors.toList()),
-                candidates.stream().map(p -> DocMaterialKey.label(p.getDocumentNo(), p.getMaterialCode())).collect(Collectors.toList()),
+                candidates.stream().map(p -> DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getInboundDate())).collect(Collectors.toList()),
+                candidates.stream().map(p -> DocMaterialDateKey.label(p.getDocumentNo(), p.getMaterialCode(), p.getInboundDate())).collect(Collectors.toList()),
                 candidateRows, errorRows);
 
         // 3) 查数据库中已有记录的数量
@@ -669,13 +669,13 @@ public class WorkOrderImportController {
                 .map(ProductionInbound::getDocumentNo)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
-        Map<String, BigDecimal> dbQty = productionInboundService.findQtyByDocAndMaterial(docs);
+        Map<String, BigDecimal> dbQty = productionInboundService.findQtyByDocMaterialDate(docs);
 
         // 4) 组装预览行（仅文件内重复的行不进预览）
         List<Map<String, Object>> rows = new ArrayList<>();
         for (int i = 0; i < candidates.size(); i++) {
             ProductionInbound p = candidates.get(i);
-            String key = DocMaterialKey.of(p.getDocumentNo(), p.getMaterialCode());
+            String key = DocMaterialDateKey.of(p.getDocumentNo(), p.getMaterialCode(), p.getInboundDate());
             if (duplicatedInFile.contains(key)) {
                 continue;
             }
@@ -694,7 +694,7 @@ public class WorkOrderImportController {
             row.put("hasDocument", documentId != null);     // 是否带单据图片
             row.put("dispimgId", documentId);               // 单据图 ID，供前端按需取图（变更-002）
             row.put("isUpdate", dbQty.containsKey(key));    // true=更新已有，false=新增
-            // 单据号 + 物料编码 + 数量 三者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
+            // 单据号 + 物料编码 + 日期 + 数量 四者全同 -> 保存时整行跳过（不落库，也不上传它的单据图片）
             row.put("isDuplicate", dbQty.containsKey(key)
                     && ImportDedupeUtil.isSameQty(dbQty.get(key), p.getInboundQty()));
             rows.add(row);
@@ -704,7 +704,8 @@ public class WorkOrderImportController {
 
     /**
      * 文件内业务唯一键重复检测：重复的行写入 errorRows，返回重复的键集合。
-     * 唯一键为 (单据号 + 物料编码) —— 同一张单据下不同物料是不同记录，不算重复。
+     * 唯一键为 (单据号 + 物料编码 + 日期) —— 同一张单据下不同物料、或同物料不同日期
+     * 是不同记录，不算重复（变更-047：日期进入行身份，与库表唯一键同口径）。
      *
      * @param keys   每行的组合键（与 rowNums 一一对应）
      * @param labels 每行组合键的可读描述，用于错误提示
