@@ -3,9 +3,13 @@ package org.example.exception;
 import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.exception.NotPermissionException;
 import cn.dev33.satoken.exception.NotRoleException;
+import cn.dev33.satoken.exception.NotWebContextException;
+import cn.dev33.satoken.exception.SaTokenContextException;
 import cn.dev33.satoken.exception.SaTokenException;
 import org.example.dto.ExcelResult;
 import org.example.dto.Result;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +24,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     // 未登录 / 登录失效（前端识别 401 后跳转登录页）
     @ExceptionHandler(NotLoginException.class)
@@ -39,10 +45,30 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.FORBIDDEN, "无权限访问：该操作仅管理员可用");
     }
 
-    // 其它 Sa-Token 异常兜底
+    /**
+     * 其它 Sa-Token 异常兜底 —— **必须收窄**（变更-065）。
+     *
+     * <p>原先这条把**任意** {@link SaTokenException} 映射成 403 + {@code e.getMessage()}，
+     * 而 {@link SaTokenContextException}（上下文未初始化）与 {@link NotWebContextException}
+     * （非 Web 上下文）描述的是**服务端故障**，不是"调用者无权限"。2026-10-15 的事故正是如此：
+     * 一条 DB 约束错误在 ERROR 派发里触发了上下文异常，被这条兜底渲染成
+     * 403「SaTokenContext 上下文尚未初始化」，真实原因彻底看不见 ——
+     * 当时只补了 DataIntegrityViolationException 这个**症状出口**，故障类仍在原地。
+     *
+     * <p>现在按类型分流：上下文类 → 500（如实报服务端故障）；其余 → 403 且文案固定，
+     * 不再把框架原始消息回给调用方。
+     *
+     * <p>注意：Sa-Token 1.46 里**不存在** {@code SaTokenConfigException}（评审曾建议一并列入），
+     * 所以这里只列确实存在的两个上下文类。
+     */
     @ExceptionHandler(SaTokenException.class)
     public ResponseEntity<ExcelResult<Void>> handleSaToken(SaTokenException e) {
-        return build(HttpStatus.FORBIDDEN, e.getMessage());
+        if (e instanceof SaTokenContextException || e instanceof NotWebContextException) {
+            log.error("Sa-Token 上下文异常（服务端故障，非鉴权失败）", e);
+            return build(HttpStatus.INTERNAL_SERVER_ERROR, "服务内部错误（鉴权上下文未初始化）");
+        }
+        log.warn("Sa-Token 异常：{}", e.getMessage());
+        return build(HttpStatus.FORBIDDEN, "无权限访问");
     }
 
     /**

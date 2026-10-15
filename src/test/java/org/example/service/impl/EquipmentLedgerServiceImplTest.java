@@ -29,12 +29,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.example.exception.BusinessException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -211,6 +217,8 @@ class EquipmentLedgerMaintenanceTest {
 
     private static EquipmentSaveDTO draft() {
         EquipmentSaveDTO dto = new EquipmentSaveDTO();
+        // 位号是库层 NOT NULL 列之一，且 变更-065 起在服务端先校验 —— 正常请求必然带它
+        dto.setEquipmentCode("HND-150-01");
         dto.setEquipmentName("甲醇计量罐");
         dto.setNickname("甲醇罐");
         dto.setWorkshop("罐区");
@@ -251,6 +259,8 @@ class EquipmentLedgerMaintenanceTest {
     @Test
     @DisplayName("更新：走 updateById，且可编辑字段逐项带过去")
     void updatesById() {
+        // 0 行现在会报「设备不存在」（变更-065），所以正常路径必须打桩成 1
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
         EquipmentSaveDTO dto = draft();
         dto.setId(37L);
         dto.setNickname("改过的昵称");
@@ -272,6 +282,7 @@ class EquipmentLedgerMaintenanceTest {
     @Test
     @DisplayName("清空某列时真的写 NULL（依赖 updateStrategy=ALWAYS，默认策略会静默丢掉）")
     void clearsColumnToNull() {
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
         EquipmentSaveDTO dto = draft();
         dto.setId(89L);
         dto.setBottomHeadDepth(null); // 改成平底
@@ -308,6 +319,8 @@ class EquipmentLedgerMaintenanceTest {
     @DisplayName("停用/启用：只 SET enabled 一列 —— 不许再用半实体 updateById")
     @SuppressWarnings("unchecked")
     void togglesEnabledWithTargetedUpdate() {
+        // 0 行现在会报「设备不存在」（变更-065）；这条测的是 SQL 形状，走正常路径
+        when(baseMapper.update(isNull(), any())).thenReturn(1);
         service.setEnabled(89L, false);
 
         /*
@@ -409,8 +422,91 @@ class EquipmentLedgerMaintenanceTest {
                 "pageSize 超上限必须截断，否则手搓一个大值就能把全表拉回来");
     }
 
-    private static EquipmentLedgerQueryDTO ledgerQuery(Integer pageNum, Boolean onlyEnabled, String keyword) {
-        EquipmentLedgerQueryDTO query = new EquipmentLedgerQueryDTO();
+    // ================= 变更-065：整行覆写契约的三道机器校验 =================
+
+    @Test
+    @DisplayName("字段清单一致性：实体上标 ALWAYS 的列必须在 EquipmentSaveDTO 里有对应字段")
+    void editableFieldSetsAgree() throws Exception {
+        // 为什么必须有这条：save() 的编辑分支是**整行覆写**，靠的就是实体上的 ALWAYS 策略。
+        // 将来在实体上多标一个 ALWAYS 列而忘了加进 DTO 白名单，那条路径就会把它**静默清空**，
+        // 而所有既有测试都不会失败。把「三处字段清单要一起改」从注释里的约定变成机器校验。
+        Set<String> alwaysFields = Arrays.stream(EquipmentLedger.class.getDeclaredFields())
+                .filter(f -> Optional.ofNullable(f.getAnnotation(TableField.class))
+                        .map(t -> t.updateStrategy() == FieldStrategy.ALWAYS).orElse(false))
+                .map(Field::getName)
+                .collect(Collectors.toSet());
+        assertFalse(alwaysFields.isEmpty(), "没扫到 ALWAYS 列，说明注解形态变了，这条校验需要更新");
+
+        Set<String> dtoFields = Arrays.stream(EquipmentSaveDTO.class.getDeclaredFields())
+                .map(Field::getName)
+                .filter(name -> !"id".equals(name))
+                .collect(Collectors.toSet());
+        assertTrue(dtoFields.containsAll(alwaysFields),
+                "实体 ALWAYS 列里有 DTO 表达不了的字段，整行覆写会把它清空："
+                        + minus(alwaysFields, dtoFields));
+
+        // 行为侧：DTO 里每个字段都必须真的被 applyEditableFields 搬到实体上
+        EquipmentSaveDTO dto = new EquipmentSaveDTO();
+        for (Field f : EquipmentSaveDTO.class.getDeclaredFields()) {
+            if (f.getType() == String.class) {
+                f.setAccessible(true);
+                f.set(dto, "值-" + f.getName());
+            }
+        }
+        EquipmentLedger row = new EquipmentLedger();
+        ReflectionTestUtils.invokeMethod(service, "applyEditableFields", row, dto);
+        for (String name : dtoFields) {
+            Object expected = ReflectionTestUtils.invokeGetterMethod(dto, "get" + capitalize(name));
+            Object actual = ReflectionTestUtils.invokeGetterMethod(row, "get" + capitalize(name));
+            assertEquals(expected, actual, name + " 没有被 applyEditableFields 搬过去（白名单漏了它）");
+        }
+    }
+
+    @Test
+    @DisplayName("编辑：三个 NOT NULL 列在服务端先校验 —— 给业务文案，不让 DB 约束异常穿透")
+    void saveRejectsMissingNotNullFields() {
+        EquipmentSaveDTO dto = new EquipmentSaveDTO();
+        dto.setId(1L);
+        dto.setEquipmentName("150产品罐");
+        dto.setWorkshop("罐区");
+        // 位号缺失
+        BusinessException e = assertThrows(BusinessException.class, () -> service.save(dto));
+        assertEquals("设备位号不能为空", e.getMessage());
+        verify(baseMapper, never()).updateById(any(EquipmentLedger.class));
+    }
+
+    @Test
+    @DisplayName("编辑：改 0 行 = 该 id 不存在，明确报错（原先静默当成功）")
+    void saveReportsMissingRow() {
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(0);
+        EquipmentSaveDTO dto = new EquipmentSaveDTO();
+        dto.setId(1L);
+        dto.setEquipmentCode("HND-V1");
+        dto.setEquipmentName("150产品罐");
+        dto.setWorkshop("罐区");
+        BusinessException e = assertThrows(BusinessException.class, () -> service.save(dto));
+        assertTrue(e.getMessage().contains("不存在"), e.getMessage());
+    }
+
+    @Test
+    @DisplayName("停用/启用：改 0 行同样明确报错，不再回一个假的\"成功\"")
+    void setEnabledReportsMissingRow() {
+        when(baseMapper.update(isNull(), any())).thenReturn(0);
+        BusinessException e = assertThrows(BusinessException.class, () -> service.setEnabled(404L, false));
+        assertTrue(e.getMessage().contains("不存在"), e.getMessage());
+    }
+
+    private static String capitalize(String name) {
+        return Character.toUpperCase(name.charAt(0)) + name.substring(1);
+    }
+
+    private static Set<String> minus(Set<String> left, Set<String> right) {
+        Set<String> diff = new java.util.LinkedHashSet<>(left);
+        diff.removeAll(right);
+        return diff;
+    }
+
+    private static EquipmentLedgerQueryDTO ledgerQuery(Integer pageNum, Boolean onlyEnabled, String keyword) {        EquipmentLedgerQueryDTO query = new EquipmentLedgerQueryDTO();
         query.setPageNum(pageNum);
         query.setPageSize(20);
         query.setOnlyEnabled(onlyEnabled);

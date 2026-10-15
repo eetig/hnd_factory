@@ -11,6 +11,7 @@ import org.example.dto.EquipmentLedgerVO;
 import org.example.dto.EquipmentSaveDTO;
 import org.example.dto.VesselVO;
 import org.example.entity.EquipmentLedger;
+import org.example.exception.BusinessException;
 import org.example.mapper.EquipmentLedgerMapper;
 import org.example.service.EquipmentLedgerService;
 import org.example.util.MassPerMmCalculator;
@@ -164,12 +165,37 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
             row.setSourceRow(nextManualSourceRow());
             baseMapper.insert(row);
         } else {
-            // 用 updateById 就够 —— 可编辑字段在实体上标了
-            // `@TableField(updateStrategy = ALWAYS)`，所以「清空某列」（如把下封头深度清成 NULL
-            // 表示平底）也写得进去。默认策略只写非 null 字段，那种操作会静默不生效。
-            baseMapper.updateById(row);
+            // ⚠️ 这条路径是**整行覆写**：调用方必须带齐 {@link #applyEditableFields} 里的全部
+            // 可编辑字段；未传的字段会被写成 NULL（可空列 = 静默清空，NOT NULL 列 = 撞约束）。
+            //
+            // 为什么保留整行语义：实体上那些 `updateStrategy = ALWAYS` 的存在意义就是
+            // 「把某列清成 NULL」（如「平底」要把下封头深度清空）。改成"只写非 null 字段"
+            // 会让这个已上线的操作**静默失效** —— 那比现在更糟（2026-10-15 code-review
+            // 的 Critical 2 复核结论）。所以这里做两件能立刻降低风险的事：
+            //   ① 三个 NOT NULL 列在服务端先校验：给业务文案，而不是让 DB 约束异常穿透成 500；
+            //   ② 改 0 行时明确报错（原先静默当成功）。
+            // 残留风险：区分"没传"与"传了 null"需要改 DTO 契约（JsonNullable / Map），
+            // 属接口变更，另行评估。三处字段清单的一致性由单测钉住，见
+            // EquipmentLedgerServiceImplTest#editableFieldSetsAgree。
+            requireNotNullFields(payload);
+            if (baseMapper.updateById(row) == 0) {
+                throw new BusinessException("设备不存在或已被删除（id=" + payload.getId() + "）");
+            }
         }
         return row.getId();
+    }
+
+    /** 库层 NOT NULL 的三列在服务端先校验 —— 报人能看懂的话，而不是抛约束异常 */
+    private void requireNotNullFields(EquipmentSaveDTO p) {
+        if (!StringUtils.hasText(p.getEquipmentCode())) {
+            throw new BusinessException("设备位号不能为空");
+        }
+        if (!StringUtils.hasText(p.getEquipmentName())) {
+            throw new BusinessException("设备名称不能为空");
+        }
+        if (!StringUtils.hasText(p.getWorkshop())) {
+            throw new BusinessException("车间/装置不能为空");
+        }
     }
 
     /**
@@ -210,9 +236,14 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
         // 真实原因（哪一列不能为空）被 ERROR 派发里的 Sa-Token 上下文异常盖掉了。
         //
         // 停用/启用只该动一列，所以改成定向 UPDATE：SET 段只有 enabled，别的列一概不碰。
-        baseMapper.update(null, new LambdaUpdateWrapper<EquipmentLedger>()
+        int updated = baseMapper.update(null, new LambdaUpdateWrapper<EquipmentLedger>()
                 .eq(EquipmentLedger::getId, id)
                 .set(EquipmentLedger::getEnabled, enabled ? 1 : 0));
+        // 改 0 行 = 这个 id 不存在（可能刚被别人删了）。原先静默返回成功，
+        // 前端看到"停用成功"但列表里那行还在 —— 又一条假信号（变更-065）。
+        if (updated == 0) {
+            throw new BusinessException("设备不存在或已被删除（id=" + id + "）");
+        }
     }
 
     /** 新增行的行号 = 该工作表当前最大值 + 1（唯一键的一半，不能重复） */
