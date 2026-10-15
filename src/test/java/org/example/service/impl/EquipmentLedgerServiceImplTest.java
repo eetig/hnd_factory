@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -202,6 +203,10 @@ class EquipmentLedgerMaintenanceTest {
     void setUp() {
         service = spy(new EquipmentLedgerServiceImpl());
         ReflectionTestUtils.setField(service, "baseMapper", baseMapper);
+        // 停用/启用那条定向 UPDATE 要看 SET 段里有哪些列，而 Lambda 的
+        // 「方法引用 → 列名」解析需要表元数据（纯单测里 MyBatis-Plus 不会自己初始化）。
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), EquipmentLedger.class);
     }
 
     private static EquipmentSaveDTO draft() {
@@ -300,16 +305,36 @@ class EquipmentLedgerMaintenanceTest {
     }
 
     @Test
-    @DisplayName("停用/启用：只动 enabled 一列")
-    void togglesEnabled() {
+    @DisplayName("停用/启用：只 SET enabled 一列 —— 不许再用半实体 updateById")
+    @SuppressWarnings("unchecked")
+    void togglesEnabledWithTargetedUpdate() {
         service.setEnabled(89L, false);
 
-        ArgumentCaptor<EquipmentLedger> captor = ArgumentCaptor.forClass(EquipmentLedger.class);
-        verify(baseMapper).updateById(captor.capture());
-        EquipmentLedger row = captor.getValue();
-        assertEquals(89L, row.getId());
-        assertEquals(0, row.getEnabled());
-        assertNull(row.getEquipmentName(), "只该带 enabled 一列，别的字段保持 null 不被写出");
+        /*
+         * 这条测试曾把错误实现钉住：原先写的是「半实体 + updateById」，注释还说
+         * 「别的字段保持 null 不被写出」—— 事实相反：可编辑字段都标了
+         * updateStrategy = ALWAYS，MyBatis-Plus 会把它们**一并写进 SET** 成为 NULL。
+         * 2026-10-15 的现场就是 `equipment_code = NULL` 撞 NOT NULL 约束，整页「停用」
+         * 全失败，而前端只看到一句 403（真实 DB 错被 ERROR 派发里的 Sa-Token 异常盖掉）。
+         * 所以这里从「断言实体字段」改成**断言生成的 SQL**：SET 段只许有 enabled。
+         */
+        verify(baseMapper, never()).updateById(any(EquipmentLedger.class));
+
+        ArgumentCaptor<LambdaUpdateWrapper<EquipmentLedger>> captor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(baseMapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<EquipmentLedger> wrapper = captor.getValue();
+
+        String setSql = wrapper.getSqlSet();
+        assertTrue(setSql.contains("enabled"), "SET 段必须写 enabled：" + setSql);
+        for (String column : List.of("equipment_code", "equipment_name", "nickname", "spec",
+                "workshop", "container_type", "inner_diameter", "shell_length", "medium",
+                "density", "remark")) {
+            assertFalse(setSql.contains(column),
+                    "SET 段混进了 " + column + " —— ALWAYS 策略会把它写成 NULL，撞库的 NOT NULL 约束：" + setSql);
+        }
+        assertTrue(wrapper.getSqlSegment().contains("id"),
+                "WHERE 必须按 id 定位：" + wrapper.getSqlSegment());
     }
 
     @Test

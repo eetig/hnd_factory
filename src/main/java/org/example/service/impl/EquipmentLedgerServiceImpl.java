@@ -2,6 +2,7 @@ package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
@@ -198,10 +199,20 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
 
     @Override
     public void setEnabled(Long id, boolean enabled) {
-        EquipmentLedger row = new EquipmentLedger();
-        row.setId(id);
-        row.setEnabled(enabled ? 1 : 0);
-        baseMapper.updateById(row);
+        // ⚠️ 不能再用「半实体 + updateById」（变更-061）。
+        //
+        // 实体上可编辑字段都标了 updateStrategy = ALWAYS（那是为了让「清空某列」能落库，
+        // 见 EquipmentLedger 的注释），MyBatis-Plus 于是会把这些列**一并写进 SET**，
+        // 半实体里没赋值的就成了 `equipment_code = NULL, equipment_name = NULL, …` ——
+        // 撞库的 NOT NULL 约束，整页「停用」全失败。
+        //
+        // 2026-10-15 实测的事故现场：前端只看到 403「SaTokenContext 上下文尚未初始化」，
+        // 真实原因（哪一列不能为空）被 ERROR 派发里的 Sa-Token 上下文异常盖掉了。
+        //
+        // 停用/启用只该动一列，所以改成定向 UPDATE：SET 段只有 enabled，别的列一概不碰。
+        baseMapper.update(null, new LambdaUpdateWrapper<EquipmentLedger>()
+                .eq(EquipmentLedger::getId, id)
+                .set(EquipmentLedger::getEnabled, enabled ? 1 : 0));
     }
 
     /** 新增行的行号 = 该工作表当前最大值 + 1（唯一键的一半，不能重复） */

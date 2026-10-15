@@ -57,6 +57,19 @@ public class SaTokenConfigure implements WebMvcConfigurer {
             SaRouter.match(SaHttpMethod.GET)
                     .match(ADMIN_READ_PATTERNS)
                     .check(r -> StpUtil.checkRole("admin"));
-        })).addPathPatterns("/**");
+        })).addPathPatterns("/**")
+                /*
+                 * ⚠️ /error 不走本拦截器（变更-061）。
+                 *
+                 * 那次派发是「处理某个请求时已经出错」之后的转发，此时 Sa-Token 的上下文并未
+                 * 初始化 —— 本拦截器在这里再跑一遍鉴权，只会抛 SaTokenContextException，
+                 * 然后被 GlobalExceptionHandler 的 Sa-Token 兜底转成一句 403，
+                 * **把真实错误盖掉**（2026-10-15 实测：一条 DB 约束错误被盖成
+                 * 「SaTokenContext 上下文尚未初始化」，排查方向完全错）。
+                 *
+                 * 下面 WRITE_WHITELIST 里的 "/error" 因此成了冗余保险 —— 留着不改，
+                 * 两处都表达「/error 不该被鉴权拦」这同一个意思。
+                 */
+                .excludePathPatterns("/error");
     }
 }

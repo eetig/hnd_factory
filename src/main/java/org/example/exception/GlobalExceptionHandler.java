@@ -6,6 +6,7 @@ import cn.dev33.satoken.exception.NotRoleException;
 import cn.dev33.satoken.exception.SaTokenException;
 import org.example.dto.ExcelResult;
 import org.example.dto.Result;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BindException;
@@ -42,6 +43,23 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(SaTokenException.class)
     public ResponseEntity<ExcelResult<Void>> handleSaToken(SaTokenException e) {
         return build(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
+    /**
+     * 数据库约束 / 完整性错误（变更-061）。
+     *
+     * <p>为什么必须单独映射：这类异常原先没有处理器，会冒泡出 DispatcherServlet 触发 ERROR
+     * 派发；而那次派发里 Sa-Token 的上下文并没有初始化，于是又抛
+     * {@link SaTokenException}，被上面那条兜底处理成
+     * <b>403 +「SaTokenContext 上下文尚未初始化」</b> —— 真正的原因（哪一列不能为空）
+     * 被彻底盖掉，排查时完全看不出方向（2026-10-15 实测于「设备数据维护」的停用按钮）。
+     *
+     * <p>这里只说「与约束冲突」，不把 SQL / 列名细节吐给前端。
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ExcelResult<Void>> handleDataIntegrity(DataIntegrityViolationException e) {
+        return build(HttpStatus.INTERNAL_SERVER_ERROR,
+                "数据完整性校验失败：写入的字段与数据库约束冲突（例如必填列为空）");
     }
 
     /**
