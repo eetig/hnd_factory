@@ -3,20 +3,29 @@ package org.example.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import jakarta.validation.Valid;
+import org.example.component.ImgUploader;
 import org.example.dto.PageResult;
 import org.example.dto.PurchaseTrackingQueryDTO;
 import org.example.dto.PurchaseTrackingSaveDTO;
 import org.example.dto.PurchaseTrackingVO;
 import org.example.dto.Result;
+import org.example.exception.BusinessException;
 import org.example.service.PurchaseTrackingService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * 采购进度跟踪（需求登记 → 下单 → 到货）。
@@ -38,6 +47,9 @@ public class PurchaseTrackingController {
 
     @Autowired
     private PurchaseTrackingService purchaseTrackingService;
+
+    @Autowired
+    private ImgUploader imgUploader;
 
     /**
      * 列表：后端分页 + 后端关键字 / 日期筛选。
@@ -64,5 +76,49 @@ public class PurchaseTrackingController {
     public Result<Void> delete(@RequestParam("id") Long id) {
         purchaseTrackingService.delete(id);
         return Result.success(null);
+    }
+
+    /** 送货单图片的后缀白名单。img-service 只收 jpg/png，这里先拦一道给出人能看懂的话 */
+    private static final Set<String> ALLOWED_IMAGE_EXT = Set.of("jpg", "jpeg", "png");
+
+    /** img-service 自己限 10MB；在这边先拦，免得使用者等半天换来一句存储侧报错 */
+    private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
+
+    /**
+     * 上传送货单图片（变更-094：使用方说「送货单是一张图片」）。
+     *
+     * <p>走 {@link ImgUploader} 的「单据图片」那条通路（一张进、回一个 fileName），
+     * **不是**底图那条一张进两张出的通路 —— 送货单只用于显示，不需要白纸版/亮线版。
+     *
+     * <p>上传一律打到本服务再转发：img-service 不对外暴露，而且它那边**没有鉴权注解**，
+     * 权限只能关在这一层（同 {@code EquipmentLedgerController#ledgerUploadImage} 的理由）。
+     *
+     * <p>返回的 fileName 由前端按 ADR-0004 固定拼接成 {@code /files/xxx} 存进
+     * {@code purchase_tracking.delivery_note}（那一列 varchar(64) 装得下，不用改表）。
+     */
+    @SaCheckPermission("purchase:edit")
+    @PostMapping(value = "/upload-delivery-note", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<String> uploadDeliveryNote(@RequestPart("file") MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("没有收到图片文件");
+        }
+        if (file.getSize() > MAX_IMAGE_BYTES) {
+            throw new BusinessException("图片太大（上限 10MB），请先压缩再传");
+        }
+        String ext = extensionOf(file.getOriginalFilename());
+        if (!ALLOWED_IMAGE_EXT.contains(ext)) {
+            throw new BusinessException("只支持 jpg / png 图片（送货单请拍照或截图后上传）");
+        }
+        return Result.success(
+                imgUploader.upload(file.getBytes(), file.getOriginalFilename(), ext));
+    }
+
+    /** 取扩展名（小写）；没有扩展名时返回空串，交由白名单拒掉 */
+    private static String extensionOf(String fileName) {
+        if (fileName == null) {
+            return "";
+        }
+        int dot = fileName.lastIndexOf('.');
+        return dot < 0 ? "" : fileName.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 }

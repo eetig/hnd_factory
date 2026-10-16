@@ -483,7 +483,7 @@ CREATE TABLE IF NOT EXISTS `purchase_tracking` (
   `spec`                  varchar(255) DEFAULT NULL COMMENT '规格型号',
   `required_arrival_date` date         DEFAULT NULL COMMENT '要求到货日期',
   `purchase_order_no`     varchar(64)  NOT NULL DEFAULT '' COMMENT '采购订单号（还没下单时留空）',
-  `delivery_note`         varchar(64)  NOT NULL DEFAULT '' COMMENT '送货单号（还没到货时留空）',
+  `delivery_note`         varchar(64)  NOT NULL DEFAULT '' COMMENT '送货单**图片路径**（/files/xxx，ADR-0004 固定拼接；变更-094 起是图片，不再填单号）；空串 = 还没到货；历史上存过文本单号，老数据按文本原样显示',
   `remark`                varchar(255) DEFAULT NULL COMMENT '备注',
   `create_time`           datetime     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time`           datetime     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -1452,3 +1452,16 @@ WHERE `container_type` IS NULL;
 -- --            WHERE p.permission_key = 'purchase:edit';      -- 期望恰好 1 行：admin
 -- --
 -- --     生产已于 2026-10-16 执行（见变更-091 的部署记录）。
+
+
+-- -- 19) 采购进度跟踪：`delivery_note` 改成「送货单图片路径」（变更-094，2026-10-16）
+-- --
+-- --     使用方说明「送货单是一张图片」，所以这一列改成存前端拼好的 `/files/xxx`
+-- --     （ADR-0004 固定拼接）。**只是同步列注释、不动数据**：varchar(64) 装得下
+-- --     `/files/` + 36 字符的文件名，历史上存过的文本单号保持原样、按文本显示。
+-- --     （与第 13) 步「同步列注释」同一种小改动。）
+-- ALTER TABLE `purchase_tracking`
+--   MODIFY COLUMN `delivery_note` varchar(64) NOT NULL DEFAULT ''
+--   COMMENT '送货单**图片路径**（/files/xxx，ADR-0004 固定拼接；变更-094 起是图片，不再填单号）；空串 = 还没到货；历史上存过文本单号，老数据按文本原样显示';
+-- --
+-- --     复核：SHOW FULL COLUMNS FROM purchase_tracking LIKE 'delivery_note';

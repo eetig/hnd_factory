@@ -10,6 +10,7 @@ import org.example.dto.PurchaseTrackingVO;
 import org.example.entity.MaterialStock;
 import org.example.entity.PurchaseTracking;
 import org.example.exception.BusinessException;
+import org.example.feign.ImgFeignClient;
 import org.example.mapper.MaterialStockMapper;
 import org.example.mapper.PurchaseTrackingMapper;
 import org.example.service.PurchaseTrackingService;
@@ -18,6 +19,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -27,6 +29,7 @@ import java.time.LocalDate;
  *
  * <p>三件事：后端分页查询、保存（新增/修改）、删除，外加**物料登记**（下面单列一节）。
  */
+@Slf4j
 @Service
 public class PurchaseTrackingServiceImpl
         extends ServiceImpl<PurchaseTrackingMapper, PurchaseTracking>
@@ -45,6 +48,10 @@ public class PurchaseTrackingServiceImpl
     /** 采购登记行只读这一张表；写它的是「编码登记」，不是库存 */
     @Autowired
     private MaterialStockMapper materialStockMapper;
+
+    /** 送货单图片存在 img-service（MinIO）上，换图/删记录时要把旧文件删掉 */
+    @Autowired
+    private ImgFeignClient imgFeignClient;
 
     @Override
     public IPage<PurchaseTrackingVO> listPage(PurchaseTrackingQueryDTO query) {
@@ -128,12 +135,21 @@ public class PurchaseTrackingServiceImpl
         if (dto.getId() == null) {
             baseMapper.insert(row);
         } else {
+            // 先读旧值：送货单可能是一张图片，换图/清空时得把 img-service 上的旧文件删掉。
+            // 成对操作 —— 只写不删会在 MinIO 里越堆越多，而且**没人会发现**
+            //（code-review 技能里那条「改了成对操作的一侧，就去读另一侧」说的就是这个）。
+            PurchaseTracking previous = baseMapper.selectById(dto.getId());
+            String previousDeliveryNote = previous == null ? null : previous.getDeliveryNote();
+
             row.setId(dto.getId());
             if (baseMapper.updateById(row) == 0) {
                 // 0 行 = 该 id 不存在。明确报错，不要静默当成功
                 // （维护页那条接口原先就是这个毛病，见 ADR 0002）。
                 throw new BusinessException("要修改的记录不存在（可能已被别人删除）");
             }
+            // 删旧图放在写库**之后**：写库失败要整体回滚（@Transactional），
+            // 删图先发生就删掉了一个仍然在用的文件。
+            deleteReplacedDeliveryNote(previousDeliveryNote, row.getDeliveryNote());
         }
 
         registerMaterial(row);
@@ -141,16 +157,70 @@ public class PurchaseTrackingServiceImpl
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         if (id == null) {
             throw new BusinessException("缺少 id，无法删除");
         }
+        PurchaseTracking existing = baseMapper.selectById(id);
         if (baseMapper.deleteById(id) == 0) {
             throw new BusinessException("要删除的记录不存在（可能已被别人删除）");
         }
-        // ⚠️ 刻意**不**回滚 material_stock 里的登记行：登记的是「这个编码存在过」，
+        // 删记录连同它的送货单图片一起删（对齐 TankLevelImageServiceImpl 的做法）：
+        // 库那边清干净了，存储侧留个孤儿文件没人能发现。
+        if (existing != null) {
+            deleteStoredDeliveryNote(existing.getDeliveryNote());
+        }
+        // ⚠️ 但刻意**不**回滚 material_stock 里的登记行：登记的是「这个编码存在过」，
         // 与某一条采购记录在不在无关 —— 与「旧编码即使库存为 0 也保留」同一条口径
         // （使用方 2026-10-16 的要求）。删一条采购记录不该让一个编码从总表里消失。
+    }
+
+    // ===== 送货单图片（变更-094）=====
+
+    /**
+     * 图片在库里的形态是**前端拼好的固定路径** {@code /files/<fileName>}（ADR-0004）。
+     *
+     * <p>⚠️ 但这一列**原本是文本**（送货单号），老数据里可能是任意文字、也可能是空串。
+     * 所以下面两个方法都只认「以 {@code /files/} 开头」的值 —— 把一段文本当文件名去删，
+     * 轻则白跑一趟，重则删掉别人的图。这是「改字段语义」必须付的兼容成本。
+     */
+    private void deleteReplacedDeliveryNote(String previous, String current) {
+        if (previous == null || previous.equals(current)) {
+            return;
+        }
+        deleteStoredDeliveryNote(previous);
+    }
+
+    /**
+     * 删 img-service 上的那个文件。
+     *
+     * <p>失败只记日志、不往上抛：库那边已经改完了，残留一个 MinIO 文件是次要问题，
+     * 不该让「换图 / 删记录」整个失败（同 TankLevelImageServiceImpl#deleteStoredFile 的分寸）。
+     */
+    private void deleteStoredDeliveryNote(String stored) {
+        String fileName = storedFileName(stored);
+        if (fileName == null) {
+            return;
+        }
+        try {
+            imgFeignClient.delete(fileName);
+        } catch (Exception e) {
+            log.warn("删除送货单图片失败，已忽略（库里已改完）fileName={}", fileName, e);
+        }
+    }
+
+    /** {@code /files/abc.png} → {@code abc.png}；不是这种形态一律 null（文本老数据不动） */
+    private static String storedFileName(String stored) {
+        if (!StringUtils.hasText(stored)) {
+            return null;
+        }
+        String value = stored.trim();
+        if (!value.startsWith("/files/")) {
+            return null;
+        }
+        String name = value.substring("/files/".length()).trim();
+        return name.isEmpty() ? null : name;
     }
 
     // ===== 物料登记（使用方 2026-10-16 的要求）=====

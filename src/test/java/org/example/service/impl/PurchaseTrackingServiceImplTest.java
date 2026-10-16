@@ -9,6 +9,7 @@ import org.example.entity.PurchaseTracking;
 import org.example.exception.BusinessException;
 import org.example.mapper.MaterialStockMapper;
 import org.example.mapper.PurchaseTrackingMapper;
+import org.example.feign.ImgFeignClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,9 @@ class PurchaseTrackingServiceImplTest {
 
     @Mock
     private MaterialStockMapper materialStockMapper;
+
+    @Mock
+    private ImgFeignClient imgFeignClient;
 
     @InjectMocks
     private PurchaseTrackingServiceImpl service;
@@ -197,6 +201,95 @@ class PurchaseTrackingServiceImplTest {
 
         assertDoesNotThrow(() -> service.save(dto));
         verify(baseMapper).insert(any(PurchaseTracking.class));
+    }
+
+    // ===== 送货单图片（变更-094）=====
+
+    private static PurchaseTracking stored(String deliveryNote) {
+        PurchaseTracking row = new PurchaseTracking();
+        row.setId(1L);
+        row.setDeliveryNote(deliveryNote);
+        return row;
+    }
+
+    @Test
+    @DisplayName("★ 换图：旧文件要删掉（成对操作），新值原样保留")
+    void deletesReplacedDeliveryImage() {
+        when(baseMapper.selectById(1L)).thenReturn(stored("/files/old.png"));
+        when(baseMapper.updateById(any(PurchaseTracking.class))).thenReturn(1);
+        when(baseMapper.insert(any(PurchaseTracking.class))).thenReturn(1);
+
+        PurchaseTrackingSaveDTO dto = dto();
+        dto.setId(1L);
+        dto.setDeliveryNote("/files/new.png");
+        service.save(dto);
+
+        verify(imgFeignClient).delete("old.png");
+    }
+
+    @Test
+    @DisplayName("★ 送货单没变（或从图片改成图片同一张）→ 不许重复删")
+    void keepsImageWhenUnchanged() {
+        when(baseMapper.selectById(1L)).thenReturn(stored("/files/same.png"));
+        when(baseMapper.updateById(any(PurchaseTracking.class))).thenReturn(1);
+
+        PurchaseTrackingSaveDTO dto = dto();
+        dto.setId(1L);
+        dto.setDeliveryNote("/files/same.png");
+        service.save(dto);
+
+        verify(imgFeignClient, never()).delete(any());
+    }
+
+    @Test
+    @DisplayName("★ 清空送货单 → 旧图也要删（不然它成了永远没人认领的孤儿文件）")
+    void deletesImageWhenCleared() {
+        when(baseMapper.selectById(1L)).thenReturn(stored("/files/gone.png"));
+        when(baseMapper.updateById(any(PurchaseTracking.class))).thenReturn(1);
+
+        PurchaseTrackingSaveDTO dto = dto();
+        dto.setId(1L);
+        dto.setDeliveryNote("");
+        service.save(dto);
+
+        verify(imgFeignClient).delete("gone.png");
+    }
+
+    @Test
+    @DisplayName("★ 删记录连它的送货单图片一起删")
+    void deletesImageOnRecordDelete() {
+        when(baseMapper.selectById(2L)).thenReturn(stored("/files/pic.png"));
+        when(baseMapper.deleteById(2L)).thenReturn(1);
+
+        service.delete(2L);
+
+        verify(imgFeignClient).delete("pic.png");
+    }
+
+    @Test
+    @DisplayName("★ 但那一列的老数据是**文本**（原先叫送货单号）→ 绝不能当文件名拿去删")
+    void leavesLegacyTextDeliveryNoteAlone() {
+        when(baseMapper.selectById(3L)).thenReturn(stored("SH-2026-001"));
+        when(baseMapper.deleteById(3L)).thenReturn(1);
+
+        service.delete(3L);
+
+        verify(imgFeignClient, never()).delete(any());
+    }
+
+    @Test
+    @DisplayName("★ 存储侧抖动（删图抛异常）不许连累保存/删除：库那边已经改完了")
+    void ignoresStorageFailureOnDelete() {
+        when(baseMapper.selectById(1L)).thenReturn(stored("/files/boom.png"));
+        when(baseMapper.updateById(any(PurchaseTracking.class))).thenReturn(1);
+        when(imgFeignClient.delete(any())).thenThrow(new RuntimeException("minio down"));
+
+        PurchaseTrackingSaveDTO dto = dto();
+        dto.setId(1L);
+        dto.setDeliveryNote("/files/next.png");
+
+        assertDoesNotThrow(() -> service.save(dto));
+        verify(baseMapper).updateById(any(PurchaseTracking.class));
     }
 
     // ===== 修改 / 删除的 0 行 =====
