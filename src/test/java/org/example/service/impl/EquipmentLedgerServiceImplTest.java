@@ -310,9 +310,11 @@ class EquipmentLedgerMaintenanceTest {
             assertEquals(FieldStrategy.ALWAYS, annotation.updateStrategy(),
                     name + " 的 updateStrategy 不是 ALWAYS —— 清空这一列会静默不生效");
         }
-        // 反向：底图坐标不该被开放编辑（它是按图量的，手填必然错位）
+        // 反向：底图坐标**开放写入，但不随普通保存被覆写**（变更-081 的策略变更）。
+        // 它现在是可编辑字段（维护页的「标定底图」要写它），但刻意不标 ALWAYS ——
+        // 标了之后，「保存表单」没带这一列时会把已标定的坐标清成 NULL。
         assertNull(EquipmentLedger.class.getDeclaredField("imageBounds").getAnnotation(TableField.class),
-                "imageBounds 不该带可为空更新注解");
+                "imageBounds 不该带 updateStrategy=ALWAYS：那会让普通保存把标定结果清空");
     }
 
     @Test
@@ -537,6 +539,128 @@ class EquipmentLedgerMaintenanceTest {
         when(baseMapper.update(isNull(), any())).thenReturn(0);
         BusinessException e = assertThrows(BusinessException.class, () -> service.setEnabled(404L, false));
         assertTrue(e.getMessage().contains("不存在"), e.getMessage());
+    }
+
+    // ================= 变更-081：底图坐标写入 + 启用门槛 =================
+
+    /** 与生产那 4 行同形的一台齐备容器（立式、有上下封头、底图带上下切线） */
+    private static EquipmentLedger completeVessel(Long id) {
+        EquipmentLedger row = new EquipmentLedger();
+        row.setId(id);
+        row.setEquipmentName("甲醇计量罐");
+        row.setEquipmentCode("HND-V" + id);
+        row.setWorkshop("罐区");
+        row.setContainerType(3);
+        row.setInnerDiameter(new BigDecimal("2200"));
+        row.setShellLength(new BigDecimal("3400"));
+        row.setStraightFlange(new BigDecimal("40"));
+        row.setTopHeadDepth(new BigDecimal("550"));
+        row.setBottomHeadDepth(new BigDecimal("550"));
+        row.setImageFile("vessel-methanol.png");
+        row.setImageBounds("{\"top\":83,\"left\":72,\"right\":627.5,\"width\":708,"
+                + "\"bottom\":1247,\"height\":1520,\"tangent\":218,\"tangentBottom\":1114}");
+        return row;
+    }
+
+    @Test
+    @DisplayName("启用门槛：不合规的行拒绝启用，一次说全缺什么，且**不发 UPDATE**")
+    void enableGateRejectsIncompleteRow() {
+        EquipmentLedger incomplete = new EquipmentLedger();
+        incomplete.setId(680L);
+        incomplete.setEquipmentName("三甲粗品罐");
+        incomplete.setContainerType(3);
+        when(baseMapper.selectById(680L)).thenReturn(incomplete);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> service.setEnabled(680L, true));
+
+        assertTrue(e.getMessage().contains("未配置容器底图"), e.getMessage());
+        assertTrue(e.getMessage().contains("底图未标定坐标"), e.getMessage());
+        assertTrue(e.getMessage().contains("未填内径"), e.getMessage());
+        // 关键：被拒时不能已经改了状态 —— 否则使用者看到"失败"但库里已经启用了
+        verify(baseMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    @DisplayName("启用门槛：齐备的行照常启用（不会把在用的设备挡住）")
+    void enableGateAllowsCompleteRow() {
+        when(baseMapper.selectById(674L)).thenReturn(completeVessel(674L));
+        when(baseMapper.update(isNull(), any())).thenReturn(1);
+
+        service.setEnabled(674L, true);
+
+        verify(baseMapper).update(isNull(), any());
+    }
+
+    @Test
+    @DisplayName("停用：永不拦截，也不查门槛（否则不合规的行会被永久锁在启用状态）")
+    void disablingIsNeverBlocked() {
+        when(baseMapper.update(isNull(), any())).thenReturn(1);
+
+        service.setEnabled(680L, false);
+
+        verify(baseMapper, never()).selectById(any());
+        verify(baseMapper).update(isNull(), any());
+    }
+
+    @Test
+    @DisplayName("保存：底图坐标非法直接拒（文案可展示）；合法则原样存进实体")
+    void saveValidatesImageBounds() {
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
+
+        EquipmentSaveDTO bad = draft();
+        bad.setId(674L);
+        bad.setImageBounds("{\"width\":708,\"height\":1520}");   // 缺轮廓框
+        BusinessException e = assertThrows(BusinessException.class, () -> service.save(bad));
+        assertTrue(e.getMessage().contains("left"), e.getMessage());
+        verify(baseMapper, never()).updateById(any(EquipmentLedger.class));
+
+        EquipmentSaveDTO good = draft();
+        good.setId(674L);
+        good.setImageBounds("{\"width\":708,\"height\":1520,\"left\":72,\"right\":627.5,"
+                + "\"top\":83,\"bottom\":1247,\"tangent\":218,\"tangentBottom\":1114}");
+        service.save(good);
+
+        ArgumentCaptor<EquipmentLedger> captor = ArgumentCaptor.forClass(EquipmentLedger.class);
+        verify(baseMapper).updateById(captor.capture());
+        assertEquals(good.getImageBounds(), captor.getValue().getImageBounds(),
+                "坐标应当原样存下来（不做键序/数字写法的规范化）");
+    }
+
+    @Test
+    @DisplayName("保存：没带坐标时不写这一列（否则普通保存会把标定结果清空）")
+    void saveWithoutBoundsLeavesItAlone() throws Exception {
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
+        EquipmentSaveDTO dto = draft();
+        dto.setId(674L);
+        dto.setImageBounds(null);          // 表单没带（它只改几何）
+
+        service.save(dto);
+
+        ArgumentCaptor<EquipmentLedger> captor = ArgumentCaptor.forClass(EquipmentLedger.class);
+        verify(baseMapper).updateById(captor.capture());
+        assertNull(captor.getValue().getImageBounds());
+        // 「库里原值保住」靠的是实体上没有 ALWAYS 策略：MyBatis-Plus 默认只写非 null 字段。
+        // 这一条与 editableFieldsAlwaysUpdate 的反向断言配对 —— 那边钉注解，这里钉行为。
+        Field field = EquipmentLedger.class.getDeclaredField("imageBounds");
+        assertNull(field.getAnnotation(TableField.class),
+                "imageBounds 一旦带上 ALWAYS 策略，普通保存就会把标定坐标写成 NULL");
+    }
+
+    @Test
+    @DisplayName("维护页列表：每行带「不能启用的原因」；齐备的行为 null")
+    void listPageExposesEnableBlockReason() {
+        EquipmentLedger bad = new EquipmentLedger();
+        bad.setId(680L);
+        bad.setEquipmentName("三甲粗品罐");
+        bad.setEnabled(1);
+        stubSelectPage(List.of(bad, completeVessel(674L)));
+
+        IPage<EquipmentLedgerVO> page = service.listPage(ledgerQuery(1, null, null));
+
+        String reason = page.getRecords().get(0).getEnableBlockReason();
+        assertNotNull(reason, "缺底图的行必须给出原因，否则前端只能显示一个点了没反应的按钮");
+        assertTrue(reason.startsWith("不能启用："), reason);
+        assertNull(page.getRecords().get(1).getEnableBlockReason(), "齐备的行不该有原因");
     }
 
     private static Set<String> minus(Set<String> left, Set<String> right) {

@@ -82,8 +82,12 @@ public class EquipmentLedger {
     private BigDecimal bottomHeadDepth;  // 下/右封头曲面深度(mm)；null = 平底
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String imageFile;            // 底图：内置底图写文件名（vessel.png）、上传的写 /files/xxx.png
-    private String imageBounds;          // 底图坐标 JSON（原图像素坐标）；
-                                         // **不开放编辑**（它是按底图量的，手填没意义且极易错位）
+    // ⚠️ 2026-10-16（变更-081）起**开放写入**：来源是维护页的「标定底图」——按图量出来的
+    //    罐体轮廓框与筒体切线，格式与校验见 org.example.util.VesselBounds。
+    //    但**刻意不加** updateStrategy = ALWAYS（与上面那 16 列不同）：加了之后，
+    //    「保存表单」只要没带上这一列，就会把已标定的坐标清成 NULL；默认策略只写非 null 值，
+    //    正好让「表单不碰标定、标定单独提交」这件事成立。
+    private String imageBounds;
 
     private String thickness;        // 筒体厚度(mm)
     private BigDecimal volume;       // 容积(m3)

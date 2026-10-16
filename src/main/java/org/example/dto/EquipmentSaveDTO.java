@@ -7,10 +7,10 @@ import java.math.BigDecimal;
 /**
  * 「设备数据维护」页的保存入参（{@code POST /api/equipment/ledger/save}）。
  *
- * <p><b>这个类本身就是字段白名单</b>：只放使用方要维护的那 16 项（这个字段集与
+ * <p><b>这个类本身就是字段白名单</b>：只放使用方要维护的那 17 项（这个字段集与
  * {@code EquipmentLedgerServiceImpl.EDITABLE_FIELDS} 的键集、以及实体上标了
- * {@code updateStrategy = ALWAYS} 的列集，由单测做三方相等校验），其余列（`source_sheet` /
- * `source_row` / `image_bounds` / `head_volume` / `mass_per_mm` / `thickness` / 时间戳…）
+ * {@code updateStrategy = ALWAYS} 的列集，由单测做三方一致校验），其余列（`source_sheet` /
+ * `source_row` / `head_volume` / `mass_per_mm` / `thickness` / 时间戳…）
  * 压根不在类型里，调用方想传也传不进来 —— 比在 service 里逐个 if 判断可靠，
  * 也不会因为以后往实体加字段而意外放开。
  *
@@ -49,4 +49,18 @@ public class EquipmentSaveDTO {
     private String remark;            // 备注
 
     private String imageFile;         // 容器底图：内置底图写文件名，上传的写 /files/xxx.png
+
+    /**
+     * 底图坐标（JSON，**原图像素**口径，格式与校验见 {@link org.example.util.VesselBounds}）。
+     *
+     * <p>它是维护页「标定底图」量出来的，不是手填的：{@code width/height} 是底图原图尺寸，
+     * {@code left/right/top/bottom} 是罐体轮廓框，立式容器还要给
+     * {@code tangent}/{@code tangentBottom}（筒体上下切线）。写入前会过一遍
+     * {@code VesselBounds.requireValidOrNull}，格式不对直接拒（文案面向使用者，可展示）。
+     *
+     * <p>⚠️ 实体上这一列**刻意没有**标 {@code updateStrategy = ALWAYS}（与其余 16 项不同）：
+     * 那样一来「保存表单」只要没带上本字段，就会把已标定的坐标清成 NULL。
+     * 默认策略只写非 null 值，正好让「表单不碰标定、标定单独提交」这件事成立（变更-081）。
+     */
+    private String imageBounds;
 }

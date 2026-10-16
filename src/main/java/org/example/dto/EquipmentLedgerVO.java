@@ -32,7 +32,7 @@ public class EquipmentLedgerVO {
     private BigDecimal topHeadDepth;     // 上/左封头曲面深度(mm)
     private BigDecimal bottomHeadDepth;  // 下/右封头曲面深度(mm)；null = 平底
     private String imageFile;            // 底图文件名
-    private String imageBounds;          // 底图坐标 JSON（按图片宽度归一化）
+    private String imageBounds;          // 底图坐标 JSON（原图像素：图宽高 + 罐体框 + 立式上下切线；见 VesselBounds）
     private String thickness;        // 筒体厚度(mm)
     private BigDecimal volume;       // 容积(m3)
     private BigDecimal heatArea;     // 换热面积(m2)
@@ -47,4 +47,14 @@ public class EquipmentLedgerVO {
     // 「设备数据维护」页要用：列表上显示启停状态、并切换它。
     // 该 VO 的约定是与库表一一对应、不做裁剪，这一列本来就该在（此前漏了）。
     private Integer enabled;         // 是否启用 1启用 0停用
+
+    /**
+     * 「不能启用」的原因（**派生字段，不是表里的列**）；可以启用时为 {@code null}。
+     *
+     * <p>由 {@link org.example.util.VesselEnableGate} 算出。存在它的理由：体积计算页的下拉
+     * 只收「有底图 + 有坐标 + 几何齐全」的行，而维护页原先允许把不合规的行点成「启用」——
+     * 状态显示成功、下拉里却永远不出现，使用者只会以为页面坏了（变更-081）。
+     * 维护页据此把【启用】按钮置灰并原样显示这句话，**规则只有服务端这一份**，前端不重复实现。
+     */
+    private String enableBlockReason;
 }

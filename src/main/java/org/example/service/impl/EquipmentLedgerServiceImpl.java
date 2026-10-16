@@ -15,6 +15,8 @@ import org.example.exception.BusinessException;
 import org.example.mapper.EquipmentLedgerMapper;
 import org.example.service.EquipmentLedgerService;
 import org.example.util.MassPerMmCalculator;
+import org.example.util.VesselBounds;
+import org.example.util.VesselEnableGate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -227,7 +229,11 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
             Map.entry("density", (row, p) -> row.setDensity(p.getDensity())),
             Map.entry("medium", (row, p) -> row.setMedium(p.getMedium())),
             Map.entry("remark", (row, p) -> row.setRemark(p.getRemark())),
-            Map.entry("imageFile", (row, p) -> row.setImageFile(p.getImageFile())));
+            Map.entry("imageFile", (row, p) -> row.setImageFile(p.getImageFile())),
+            // 底图坐标由维护页的「标定底图」产出：**校验后原样存**（格式与校验见 VesselBounds）。
+            // 传空 = 不动这一列（实体上刻意没标 ALWAYS），传了就必须是合法 JSON ——
+            // 存量坐标是人工按图量的，格式错一次只会表现为"下拉里少一台"，不报错。
+            Map.entry("imageBounds", (row, p) -> row.setImageBounds(VesselBounds.requireValidOrNull(p.getImageBounds()))));
 
     /** 把可编辑字段从 DTO 搬到实体；清单见 {@link #EDITABLE_FIELDS} */
     private void applyEditableFields(EquipmentLedger row, EquipmentSaveDTO p) {
@@ -236,6 +242,22 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
 
     @Override
     public void setEnabled(Long id, boolean enabled) {
+        // 启用前先过门槛（变更-081）：体积计算页的下拉只收「有底图 + 有坐标 + 几何齐全」的行
+        // （见 listVessels 的 WHERE）。原先允许把不合规的行点成「启用」，结果是
+        // 「状态显示启用、下拉里永远不出现」——一次没有任何提示的失败。现在改为明确拒绝，
+        // 并把缺什么一次说全（原因由 VesselEnableGate 生成，与维护页置灰按钮用的是同一份规则）。
+        //
+        // ⚠️ 停用**永不拦截**：拦了会把不合规的行永久锁在启用状态，比放行更糟。
+        if (enabled) {
+            EquipmentLedger row = baseMapper.selectById(id);
+            if (row == null) {
+                throw new BusinessException("设备不存在或已被删除（id=" + id + "）");
+            }
+            String blocked = VesselEnableGate.reasonText(row);
+            if (blocked != null) {
+                throw new BusinessException(blocked);
+            }
+        }
         // ⚠️ 不能再用「半实体 + updateById」（变更-061）。
         //
         // 实体上可编辑字段都标了 updateStrategy = ALWAYS（那是为了让「清空某列」能落库，
@@ -321,6 +343,10 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
         vo.setMassPerMm(ledger.getMassPerMm() != null
                 ? ledger.getMassPerMm()
                 : MassPerMmCalculator.massPerMm(ledger.getVolumePerMm(), ledger.getDensity()));
+        // 「能不能启用」的原因（派生字段，不是表里的列）：维护页据此把【启用】按钮置灰并显示原因。
+        // 这里对 search 也会算一遍 —— 同样是几次判空，行数上限 100，代价可忽略；
+        // 只有维护页会用它（调用方不读就只是一次多余的小计算）。
+        vo.setEnableBlockReason(VesselEnableGate.reasonText(ledger));
         return vo;
     }
 }
