@@ -425,8 +425,8 @@ class EquipmentLedgerMaintenanceTest {
     // ================= 变更-065：整行覆写契约的三道机器校验 =================
 
     @Test
-    @DisplayName("字段清单一致性：实体上标 ALWAYS 的列必须在 EquipmentSaveDTO 里有对应字段")
-    void editableFieldSetsAgree() throws Exception {
+    @DisplayName("字段清单一致性：DTO 字段集 = 可编辑清单键集 ⊇ 实体上标 ALWAYS 的列集")
+    void editableFieldSetsAgree() {
         // 为什么必须有这条：save() 的编辑分支是**整行覆写**，靠的就是实体上的 ALWAYS 策略。
         // 将来在实体上多标一个 ALWAYS 列而忘了加进 DTO 白名单，那条路径就会把它**静默清空**，
         // 而所有既有测试都不会失败。把「三处字段清单要一起改」从注释里的约定变成机器校验。
@@ -441,25 +441,68 @@ class EquipmentLedgerMaintenanceTest {
                 .map(Field::getName)
                 .filter(name -> !"id".equals(name))
                 .collect(Collectors.toSet());
-        assertTrue(dtoFields.containsAll(alwaysFields),
-                "实体 ALWAYS 列里有 DTO 表达不了的字段，整行覆写会把它清空："
-                        + minus(alwaysFields, dtoFields));
 
-        // 行为侧：DTO 里每个字段都必须真的被 applyEditableFields 搬到实体上
+        // ① 清单键集 = DTO 字段集。比原先的「反射逐字段对 getter」更紧：那时只能发现
+        //    「清单漏了字段」，发现不了「清单里留着 DTO 已经没有的死键」。
+        Set<String> whitelist = EquipmentLedgerServiceImpl.EDITABLE_FIELDS.keySet();
+        assertEquals(dtoFields, whitelist,
+                "白名单与 EquipmentSaveDTO 的字段集不一致：DTO 有而清单没有=" + minus(dtoFields, whitelist)
+                        + "，清单有而 DTO 没有=" + minus(whitelist, dtoFields));
+
+        // ② ALWAYS 列必须都能搬，否则整行覆写会把它清空
+        assertTrue(whitelist.containsAll(alwaysFields),
+                "实体 ALWAYS 列里有 DTO 表达不了的字段，整行覆写会把它清空："
+                        + minus(alwaysFields, whitelist));
+    }
+
+    @Test
+    @DisplayName("更新：16 个可编辑字段逐个搬到实体上（含数字列 —— 原先只给字符串列赋了值）")
+    void updateCopiesEveryEditableField() {
+        // 原实现用反射调私有 applyEditableFields，并且只给 String 字段赋了值：数字列的 setter
+        // 漏掉时两侧都是 null，断言照样通过。这里走公开的 save()，且每个字段给不同值。
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
+
         EquipmentSaveDTO dto = new EquipmentSaveDTO();
-        for (Field f : EquipmentSaveDTO.class.getDeclaredFields()) {
-            if (f.getType() == String.class) {
-                f.setAccessible(true);
-                f.set(dto, "值-" + f.getName());
-            }
-        }
-        EquipmentLedger row = new EquipmentLedger();
-        ReflectionTestUtils.invokeMethod(service, "applyEditableFields", row, dto);
-        for (String name : dtoFields) {
-            Object expected = ReflectionTestUtils.invokeGetterMethod(dto, "get" + capitalize(name));
-            Object actual = ReflectionTestUtils.invokeGetterMethod(row, "get" + capitalize(name));
-            assertEquals(expected, actual, name + " 没有被 applyEditableFields 搬过去（白名单漏了它）");
-        }
+        dto.setId(37L);
+        dto.setEquipmentCode("HND-150-01");
+        dto.setEquipmentName("甲醇计量罐");
+        dto.setNickname("甲醇罐");
+        dto.setWorkshop("罐区");
+        dto.setSpec("DN2300/DN2200x3400（夹套）");
+        dto.setContainerType(3);
+        dto.setInnerDiameter(new BigDecimal("2200"));
+        dto.setShellLength(new BigDecimal("3400"));
+        dto.setStraightFlange(new BigDecimal("40"));
+        dto.setTopHeadDepth(new BigDecimal("550"));
+        dto.setBottomHeadDepth(new BigDecimal("550"));
+        dto.setVolumePerMm(new BigDecimal("0.000004"));
+        dto.setDensity(new BigDecimal("0.792"));
+        dto.setMedium("甲醇");
+        dto.setRemark("现场复核过");
+        dto.setImageFile("/files/abc.png");
+
+        service.save(dto);
+
+        ArgumentCaptor<EquipmentLedger> captor = ArgumentCaptor.forClass(EquipmentLedger.class);
+        verify(baseMapper).updateById(captor.capture());
+        EquipmentLedger row = captor.getValue();
+
+        assertEquals("HND-150-01", row.getEquipmentCode());
+        assertEquals("甲醇计量罐", row.getEquipmentName());
+        assertEquals("甲醇罐", row.getNickname());
+        assertEquals("罐区", row.getWorkshop());
+        assertEquals("DN2300/DN2200x3400（夹套）", row.getSpec());
+        assertEquals(3, row.getContainerType().intValue());
+        assertEquals(0, new BigDecimal("2200").compareTo(row.getInnerDiameter()));
+        assertEquals(0, new BigDecimal("3400").compareTo(row.getShellLength()));
+        assertEquals(0, new BigDecimal("40").compareTo(row.getStraightFlange()));
+        assertEquals(0, new BigDecimal("550").compareTo(row.getTopHeadDepth()));
+        assertEquals(0, new BigDecimal("550").compareTo(row.getBottomHeadDepth()));
+        assertEquals(0, new BigDecimal("0.000004").compareTo(row.getVolumePerMm()));
+        assertEquals(0, new BigDecimal("0.792").compareTo(row.getDensity()));
+        assertEquals("甲醇", row.getMedium());
+        assertEquals("现场复核过", row.getRemark());
+        assertEquals("/files/abc.png", row.getImageFile());
     }
 
     @Test
@@ -494,10 +537,6 @@ class EquipmentLedgerMaintenanceTest {
         when(baseMapper.update(isNull(), any())).thenReturn(0);
         BusinessException e = assertThrows(BusinessException.class, () -> service.setEnabled(404L, false));
         assertTrue(e.getMessage().contains("不存在"), e.getMessage());
-    }
-
-    private static String capitalize(String name) {
-        return Character.toUpperCase(name.charAt(0)) + name.substring(1);
     }
 
     private static Set<String> minus(Set<String> left, Set<String> right) {

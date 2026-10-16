@@ -22,6 +22,8 @@ import java.text.Collator;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 /**
@@ -199,28 +201,37 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
     }
 
     /**
-     * 把可维护的字段从 DTO 搬到实体（**字段清单只在这一处**）。
+     * 可编辑字段清单：**数据**，不是 16 行 setter。
      *
-     * <p>逐字段列出来是刻意的：用 BeanUtils 之类整体拷贝会连 DTO 将来新增的字段一起带过去，
-     * 白名单就形同虚设。
+     * <p>键是 DTO 属性名（与实体属性同名是这张表的约定），值是搬运动作。做成数据的理由：
+     * 「DTO 字段集 / 实体上标 ALWAYS 的列集 / 搬运清单」原先只是三份靠肉眼同步的东西，
+     * 测试还得用反射去调私有方法来验。现在清单本身就是数据，测试直接对键集断言
+     * （见 {@code EquipmentLedgerServiceImplTest#editableFieldSetsAgree}）。
+     *
+     * <p>逐字段列出来仍然是刻意的：用 BeanUtils 之类整体拷贝会连 DTO 将来新增的字段一起
+     * 带过去，白名单就形同虚设。
      */
+    static final Map<String, BiConsumer<EquipmentLedger, EquipmentSaveDTO>> EDITABLE_FIELDS = Map.ofEntries(
+            Map.entry("equipmentCode", (row, p) -> row.setEquipmentCode(p.getEquipmentCode())),
+            Map.entry("equipmentName", (row, p) -> row.setEquipmentName(p.getEquipmentName())),
+            Map.entry("nickname", (row, p) -> row.setNickname(p.getNickname())),
+            Map.entry("workshop", (row, p) -> row.setWorkshop(p.getWorkshop())),
+            Map.entry("spec", (row, p) -> row.setSpec(p.getSpec())),
+            Map.entry("containerType", (row, p) -> row.setContainerType(p.getContainerType())),
+            Map.entry("innerDiameter", (row, p) -> row.setInnerDiameter(p.getInnerDiameter())),
+            Map.entry("shellLength", (row, p) -> row.setShellLength(p.getShellLength())),
+            Map.entry("straightFlange", (row, p) -> row.setStraightFlange(p.getStraightFlange())),
+            Map.entry("topHeadDepth", (row, p) -> row.setTopHeadDepth(p.getTopHeadDepth())),
+            Map.entry("bottomHeadDepth", (row, p) -> row.setBottomHeadDepth(p.getBottomHeadDepth())),
+            Map.entry("volumePerMm", (row, p) -> row.setVolumePerMm(p.getVolumePerMm())),
+            Map.entry("density", (row, p) -> row.setDensity(p.getDensity())),
+            Map.entry("medium", (row, p) -> row.setMedium(p.getMedium())),
+            Map.entry("remark", (row, p) -> row.setRemark(p.getRemark())),
+            Map.entry("imageFile", (row, p) -> row.setImageFile(p.getImageFile())));
+
+    /** 把可编辑字段从 DTO 搬到实体；清单见 {@link #EDITABLE_FIELDS} */
     private void applyEditableFields(EquipmentLedger row, EquipmentSaveDTO p) {
-        row.setEquipmentCode(p.getEquipmentCode());
-        row.setEquipmentName(p.getEquipmentName());
-        row.setNickname(p.getNickname());
-        row.setWorkshop(p.getWorkshop());
-        row.setSpec(p.getSpec());
-        row.setContainerType(p.getContainerType());
-        row.setInnerDiameter(p.getInnerDiameter());
-        row.setShellLength(p.getShellLength());
-        row.setStraightFlange(p.getStraightFlange());
-        row.setTopHeadDepth(p.getTopHeadDepth());
-        row.setBottomHeadDepth(p.getBottomHeadDepth());
-        row.setVolumePerMm(p.getVolumePerMm());
-        row.setDensity(p.getDensity());
-        row.setMedium(p.getMedium());
-        row.setRemark(p.getRemark());
-        row.setImageFile(p.getImageFile());
+        EDITABLE_FIELDS.values().forEach(setter -> setter.accept(row, p));
     }
 
     @Override

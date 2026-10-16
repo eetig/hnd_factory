@@ -7,7 +7,9 @@ import java.math.BigDecimal;
 /**
  * 「设备数据维护」页的保存入参（{@code POST /api/equipment/ledger/save}）。
  *
- * <p><b>这个类本身就是字段白名单</b>：只放使用方要维护的那 15 项，其余列（`source_sheet` /
+ * <p><b>这个类本身就是字段白名单</b>：只放使用方要维护的那 16 项（这个字段集与
+ * {@code EquipmentLedgerServiceImpl.EDITABLE_FIELDS} 的键集、以及实体上标了
+ * {@code updateStrategy = ALWAYS} 的列集，由单测做三方相等校验），其余列（`source_sheet` /
  * `source_row` / `image_bounds` / `head_volume` / `mass_per_mm` / `thickness` / 时间戳…）
  * 压根不在类型里，调用方想传也传不进来 —— 比在 service 里逐个 if 判断可靠，
  * 也不会因为以后往实体加字段而意外放开。
