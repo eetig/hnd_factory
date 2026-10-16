@@ -508,16 +508,47 @@ class EquipmentLedgerMaintenanceTest {
     }
 
     @Test
-    @DisplayName("编辑：三个 NOT NULL 列在服务端先校验 —— 给业务文案，不让 DB 约束异常穿透")
-    void saveRejectsMissingNotNullFields() {
+    @DisplayName("编辑：设备名称为空才拒；位号/车间允许空串（变更-085 更正了原先自相矛盾的规则）")
+    void saveRejectsOnlyEmptyName() {
         EquipmentSaveDTO dto = new EquipmentSaveDTO();
         dto.setId(1L);
-        dto.setEquipmentName("150产品罐");
+        dto.setEquipmentCode("HND-V1");
         dto.setWorkshop("罐区");
-        // 位号缺失
+        // 名称缺失 → 拒（它是人认设备的唯一标识）
         BusinessException e = assertThrows(BusinessException.class, () -> service.save(dto));
-        assertEquals("设备位号不能为空", e.getMessage());
+        assertEquals("设备名称不能为空", e.getMessage());
         verify(baseMapper, never()).updateById(any(EquipmentLedger.class));
+
+        // 名称是空白串 → 同样拒
+        dto.setEquipmentName("   ");
+        assertEquals("设备名称不能为空",
+                assertThrows(BusinessException.class, () -> service.save(dto)).getMessage());
+    }
+
+    @Test
+    @DisplayName("★ 回归（变更-085）：位号/车间为空的行必须能存进去 —— 生产上 92 行都是空的")
+    void saveAcceptsRowsWithoutCodeAndWorkshop() {
+        // 生产库真实形态：92 行全部 equipment_code='' 且 workshop=''
+        // （库定义 NOT NULL DEFAULT ''，源台账里"整页没有位号"的容器有意留空）
+        EquipmentSaveDTO dto = new EquipmentSaveDTO();
+        dto.setId(680L);
+        dto.setEquipmentCode(null);
+        dto.setWorkshop(null);
+        dto.setEquipmentName("三甲粗品罐");
+        dto.setInnerDiameter(new java.math.BigDecimal("1600"));
+        dto.setShellLength(new java.math.BigDecimal("2000"));
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
+
+        service.save(dto);
+
+        // null 被归一成空串（不撞 NOT NULL），几何照常写下去
+        ArgumentCaptor<EquipmentLedger> captor = ArgumentCaptor.forClass(EquipmentLedger.class);
+        verify(baseMapper).updateById(captor.capture());
+        EquipmentLedger written = captor.getValue();
+        assertEquals("", written.getEquipmentCode());
+        assertEquals("", written.getWorkshop());
+        assertEquals("三甲粗品罐", written.getEquipmentName());
+        assertEquals(0, new java.math.BigDecimal("1600").compareTo(written.getInnerDiameter()));
     }
 
     @Test

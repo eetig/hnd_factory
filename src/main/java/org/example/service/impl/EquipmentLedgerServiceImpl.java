@@ -226,16 +226,21 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
         return StringUtils.hasText(s) ? s.trim() : null;
     }
 
-    /** 库层 NOT NULL 的三列在服务端先校验 —— 报人能看懂的话，而不是抛约束异常 */
+    /**
+     * 库层 NOT NULL 的列在服务端先校验 —— 报人能看懂的话，而不是抛约束异常。
+     *
+     * <p>⚠️ 变更-085 更正了一条**自相矛盾**的规则：原先这里用 {@code hasText} 要求
+     * 「设备位号」「车间/装置」都非空，但这两列的库定义是 {@code NOT NULL DEFAULT ''}，
+     * 而且台账里**整整 92 行都没有位号与车间**（源台账里"整页没有位号"的容器，见实体注释）。
+     * 于是**每一次保存都被拒**（第一句就是"设备位号不能为空"），且前端把
+     * {@code HTTP 200 + success:false} 当成功 ⇒ 表现为"点了保存、弹窗关了、什么都没保存"。
+     *
+     * <p>现在只有**设备名称**是硬要求（它是人认设备的唯一标识，且 92 行全都有值）；
+     * 位号/车间允许空串（与库定义一致），由 {@link #EDITABLE_FIELDS} 把 null 归一成 {@code ""}。
+     */
     private void requireNotNullFields(EquipmentSaveDTO p) {
-        if (!StringUtils.hasText(p.getEquipmentCode())) {
-            throw new BusinessException("设备位号不能为空");
-        }
         if (!StringUtils.hasText(p.getEquipmentName())) {
             throw new BusinessException("设备名称不能为空");
-        }
-        if (!StringUtils.hasText(p.getWorkshop())) {
-            throw new BusinessException("车间/装置不能为空");
         }
     }
 
@@ -251,10 +256,15 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
      * 带过去，白名单就形同虚设。
      */
     static final Map<String, BiConsumer<EquipmentLedger, EquipmentSaveDTO>> EDITABLE_FIELDS = Map.ofEntries(
-            Map.entry("equipmentCode", (row, p) -> row.setEquipmentCode(p.getEquipmentCode())),
+            // 位号与车间：库定义 NOT NULL DEFAULT ''，台账里**整页没有位号**的容器是有意留空的
+            // （见实体注释）。所以 null 归一成空串 —— 插入不会撞约束，更新也不会被误判成"不能为空"
+            // （变更-085 修的就是这条：原先 92 行全被拒，任何保存都存不进去）。
+            Map.entry("equipmentCode", (row, p) ->
+                    row.setEquipmentCode(p.getEquipmentCode() == null ? "" : p.getEquipmentCode())),
             Map.entry("equipmentName", (row, p) -> row.setEquipmentName(p.getEquipmentName())),
             Map.entry("nickname", (row, p) -> row.setNickname(p.getNickname())),
-            Map.entry("workshop", (row, p) -> row.setWorkshop(p.getWorkshop())),
+            Map.entry("workshop", (row, p) ->
+                    row.setWorkshop(p.getWorkshop() == null ? "" : p.getWorkshop())),
             Map.entry("spec", (row, p) -> row.setSpec(p.getSpec())),
             Map.entry("containerType", (row, p) -> row.setContainerType(p.getContainerType())),
             Map.entry("innerDiameter", (row, p) -> row.setInnerDiameter(p.getInnerDiameter())),
