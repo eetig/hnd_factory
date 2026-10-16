@@ -10,7 +10,13 @@ spring:
   # 本机开发默认连本机 MySQL；容器部署由 application-prod.yml 覆盖为 1Panel 的容器名
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    # rewriteBatchedStatements=true（2026-10-16 性能审查，变更-072）：
+    #   MyBatis-Plus 的 saveBatch / updateBatchById 走的是 JDBC addBatch + executeBatch，而
+    #   Connector/J 默认**不会**把它改写成多值 INSERT —— 每条记录仍是一次服务器往返
+    #   （5 万行导入 = 5 万次 RTT，跨机房时这一项就是几十秒）。打开后驱动才真正合并成批量语句。
+    #   useServerPrepStmts=false 是官方配套项：服务端预编译会挡住批处理改写。
+    #   ⚠️ 只影响批量写的传输形态，不改任何 SQL 语义；有疑虑先删掉这两个参数即可回退。
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&useServerPrepStmts=false
     username: ${MYSQL_USER:root}
     # 不设默认值：口令绝不能写进仓库（本文件在公开仓库中，且历史提交无法撤销）。
     # 本地开发请在工作目录建 config/application.yml（已 gitignore，见 config/application.yml.example）；

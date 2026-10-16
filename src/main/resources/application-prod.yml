@@ -44,7 +44,9 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 容器内不可用 127.0.0.1，必须用 docker 网络内的容器名
-    url: jdbc:mysql://${MYSQL_HOST:1Panel-mysql-Ipel}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    # 与 application.yml 同一处改动（变更-072）：批处理不改写会让逐行往返吃掉导入时间，
+    # 详见 application.yml 里 url 上方的注释。生产容器同样受益。
+    url: jdbc:mysql://${MYSQL_HOST:1Panel-mysql-Ipel}:${MYSQL_PORT:3306}/${MYSQL_DB:factory_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&useServerPrepStmts=false
     username: ${MYSQL_USER:root}
     # 不设默认值：口令绝不能写进仓库。生产由 1Panel compose 的 MYSQL_PASSWORD 环境变量注入，
     # 未注入时启动即失败（fail-fast），好过静默沿用一个已泄露的口令。
