@@ -663,6 +663,56 @@ class EquipmentLedgerMaintenanceTest {
         assertNull(page.getRecords().get(1).getEnableBlockReason(), "齐备的行不该有原因");
     }
 
+    @Test
+    @DisplayName("换底图且没带新坐标 → 定向清空旧坐标（旧坐标画到新图上液面就错，而且不报错）")
+    void changingDrawingClearsStaleBounds() {
+        when(baseMapper.selectById(674L)).thenReturn(completeVessel(674L));
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
+        when(baseMapper.update(isNull(), any())).thenReturn(1);
+
+        EquipmentSaveDTO dto = draft();
+        dto.setId(674L);
+        dto.setImageFile("/files/new-drawing.png");   // 与库里的 vessel-methanol.png 不同
+        dto.setImageBounds(null);
+
+        service.save(dto);
+
+        // 清空那一条：SET 段只有 image_bounds（避免拿半实体 updateById 把别的列也写一遍）
+        verify(baseMapper).update(isNull(), any());
+    }
+
+    @Test
+    @DisplayName("底图没变 → 不动坐标（反复保存同一个表单不该把标定清掉）")
+    void sameDrawingKeepsBounds() {
+        when(baseMapper.selectById(674L)).thenReturn(completeVessel(674L));
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
+
+        EquipmentSaveDTO dto = draft();
+        dto.setId(674L);
+        dto.setImageFile("vessel-methanol.png");      // 与库里同名
+        dto.setImageBounds(null);
+
+        service.save(dto);
+
+        verify(baseMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    @DisplayName("换底图但带了新坐标 → 存新坐标，且不必多读一次库")
+    void newDrawingWithNewBoundsSkipsClear() {
+        when(baseMapper.updateById(any(EquipmentLedger.class))).thenReturn(1);
+
+        EquipmentSaveDTO dto = draft();
+        dto.setId(674L);
+        dto.setImageFile("/files/new.png");
+        dto.setImageBounds("{\"width\":100,\"height\":200,\"left\":1,\"right\":99,\"top\":2,\"bottom\":198}");
+
+        service.save(dto);
+
+        verify(baseMapper, never()).update(isNull(), any());
+        verify(baseMapper, never()).selectById(674L);
+    }
+
     private static Set<String> minus(Set<String> left, Set<String> right) {
         Set<String> diff = new java.util.LinkedHashSet<>(left);
         diff.removeAll(right);

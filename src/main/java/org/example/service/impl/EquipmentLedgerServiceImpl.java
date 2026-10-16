@@ -25,6 +25,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -182,11 +183,47 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
             // 属接口变更，另行评估。三处字段清单的一致性由单测钉住，见
             // EquipmentLedgerServiceImplTest#editableFieldSetsAgree。
             requireNotNullFields(payload);
+            // 「换图即作废旧坐标」（变更-083）：imageBounds 刻意没有 ALWAYS 策略（变更-081），
+            // 所以调用方传 null 时这一列会被跳过 —— 好处是"普通保存不碰标定"，代价是**没人能清掉它**。
+            // 而"换了底图却留着旧坐标"是**不报错的错**：坐标是按旧图量的，画到新图上液面位置就错了，
+            // 体积计算页却照样列出这台设备；手机端换图就是这条路径（那边不做标定）。
+            // 所以只在「底图文件名确实变了、且本次没带新坐标」时定向清空（SET 段只有这一列）。
+            // 短路顺序有意：带了新坐标就不必多读一次库。
+            boolean clearStaleBounds = !StringUtils.hasText(payload.getImageBounds())
+                    && imageFileChanged(payload);
             if (baseMapper.updateById(row) == 0) {
                 throw new BusinessException("设备不存在或已被删除（id=" + payload.getId() + "）");
             }
+            if (clearStaleBounds) {
+                clearImageBounds(payload.getId());
+            }
         }
         return row.getId();
+    }
+
+    /**
+     * 这次的底图文件名是否与库里不同（含「清成空」）。
+     *
+     * <p>传了与库中**相同**的文件名返回 false —— 反复保存同一个表单不该把已标定的坐标清掉。
+     * 行不存在时也返回 false：让 {@code updateById} 去报那句"设备不存在"，避免文案重复。
+     */
+    private boolean imageFileChanged(EquipmentSaveDTO payload) {
+        EquipmentLedger current = baseMapper.selectById(payload.getId());
+        if (current == null) {
+            return false;
+        }
+        return !Objects.equals(trimToNull(current.getImageFile()), trimToNull(payload.getImageFile()));
+    }
+
+    /** 定向清空底图坐标：默认更新策略不写 null，所以要单独发一条只 SET 这一列的 UPDATE */
+    private void clearImageBounds(Long id) {
+        baseMapper.update(null, new LambdaUpdateWrapper<EquipmentLedger>()
+                .eq(EquipmentLedger::getId, id)
+                .set(EquipmentLedger::getImageBounds, null));
+    }
+
+    private static String trimToNull(String s) {
+        return StringUtils.hasText(s) ? s.trim() : null;
     }
 
     /** 库层 NOT NULL 的三列在服务端先校验 —— 报人能看懂的话，而不是抛约束异常 */
