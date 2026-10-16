@@ -5,12 +5,13 @@ import org.example.dto.WorkOrderExcelDTO;
 import org.example.entity.WorkOrder;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.util.List;
+
+import static org.example.util.ExcelValueParser.parseDate;
+import static org.example.util.ExcelValueParser.parseDecimal;
+import static org.example.util.ExcelValueParser.parseInt;
+import static org.example.util.ExcelValueParser.trim;
 
 /**
  * 工单导入：Excel DTO -> 实体 的转换、校验、类型识别。
@@ -19,14 +20,6 @@ public final class WorkOrderImportUtil {
 
     private WorkOrderImportUtil() {
     }
-
-    private static final List<DateTimeFormatter> DATE_FORMATTERS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-            DateTimeFormatter.ofPattern("yyyy/M/d"),
-            DateTimeFormatter.ofPattern("yyyy.M.d"),
-            DateTimeFormatter.ofPattern("yyyyMMdd"),
-            DateTimeFormatter.ofPattern("M/d/yyyy")
-    );
 
     public static WorkOrder toEntity(WorkOrderExcelDTO dto) {
         WorkOrder w = new WorkOrder();
@@ -74,52 +67,6 @@ public final class WorkOrderImportUtil {
     public static String typeName(String orderNo) {
         WorkOrderTypeEnum t = WorkOrderTypeEnum.detect(orderNo);
         return t == null ? "未知类型" : t.getTypeName();
-    }
-
-    private static String trim(String s) {
-        return s == null ? null : s.trim();
-    }
-
-    private static Integer parseInt(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(s.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static BigDecimal parseDecimal(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return new BigDecimal(s.trim().replace(",", "").replace(" ", ""));
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static LocalDate parseDate(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        String v = s.trim();
-        for (DateTimeFormatter f : DATE_FORMATTERS) {
-            try {
-                return LocalDate.parse(v, f);
-            } catch (DateTimeParseException ignored) {
-                // try next format
-            }
-        }
-        try {
-            long serial = (long) Double.parseDouble(v);
-            return LocalDate.of(1899, 12, 30).plusDays(serial);
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
     }
 
     // 更改时间：用「更改日期 + 更改时间(一天的分数)」拼出完整时间

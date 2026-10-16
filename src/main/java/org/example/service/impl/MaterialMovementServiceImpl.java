@@ -24,26 +24,21 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static org.example.util.ExcelValueParser.parseDate;
+import static org.example.util.ExcelValueParser.parseDecimal;
+import static org.example.util.ExcelValueParser.parseInt;
+import static org.example.util.ExcelValueParser.trim;
 
 @Service
 public class MaterialMovementServiceImpl extends ServiceImpl<MaterialMovementMapper, MaterialMovement> implements MaterialMovementService {
 
     @Autowired
     private ExcelParseFeign excelParseFeign;
-
-    private static final List<DateTimeFormatter> DATE_FORMATTERS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-            DateTimeFormatter.ofPattern("yyyy/M/d"),
-            DateTimeFormatter.ofPattern("yyyy.M.d"),
-            DateTimeFormatter.ofPattern("yyyyMMdd"),
-            DateTimeFormatter.ofPattern("M/d/yyyy")
-    );
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -220,50 +215,4 @@ public class MaterialMovementServiceImpl extends ServiceImpl<MaterialMovementMap
         return null;
     }
 
-    private String trim(String s) {
-        return s == null ? null : s.trim();
-    }
-
-    private Integer parseInt(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(s.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private BigDecimal parseDecimal(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return new BigDecimal(s.trim().replace(",", "").replace(" ", ""));
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private LocalDate parseDate(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        String v = s.trim();
-        for (DateTimeFormatter f : DATE_FORMATTERS) {
-            try {
-                return LocalDate.parse(v, f);
-            } catch (DateTimeParseException ignored) {
-                // try next format
-            }
-        }
-        // 兜底：Excel 日期序列号（如 46202）
-        try {
-            long serial = (long) Double.parseDouble(v);
-            return LocalDate.of(1899, 12, 30).plusDays(serial);
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
-    }
 }

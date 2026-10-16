@@ -4,7 +4,8 @@ import org.example.dto.WorkOrderExcelDTO;
 import org.example.entity.MaterialStock;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
+import static org.example.util.ExcelValueParser.parseDecimal;
+import static org.example.util.ExcelValueParser.trim;
 
 /**
  * 库存汇总导入：Excel DTO -> MaterialStock 的转换与校验。
@@ -61,21 +62,5 @@ public final class MaterialStockImportUtil {
     private static String ext(WorkOrderExcelDTO dto, String header) {
         Object value = dto.getExtMap() == null ? null : dto.getExtMap().get(header);
         return value == null ? null : String.valueOf(value);
-    }
-
-    private static String trim(String s) {
-        return s == null ? null : s.trim();
-    }
-
-    /** 千分位（6,000.000）与空白都要能解析 —— 与 ImportUtil 系列的容错口径一致 */
-    private static BigDecimal parseDecimal(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return new BigDecimal(s.trim().replace(",", "").replace("，", "").replace(" ", ""));
-        } catch (NumberFormatException e) {
-            return null;
-        }
     }
 }

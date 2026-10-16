@@ -27,6 +27,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import static org.example.util.ExcelValueParser.trim;
+
 /**
  * 月底储罐液位记录：查询 + 录入维护实现。
  *
@@ -192,10 +194,6 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
             throw new BusinessException("该记录不存在或已被删除，请刷新后重试。");
         }
         return record;
-    }
-
-    private static String trim(String value) {
-        return value == null ? null : value.trim();
     }
 
     private TankLevelVO toVO(TankLevelRecord record, List<TankLevelImageVO> images) {

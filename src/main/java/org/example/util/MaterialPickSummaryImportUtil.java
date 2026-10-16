@@ -4,11 +4,10 @@ import org.example.dto.WorkOrderExcelDTO;
 import org.example.entity.MaterialPickSummary;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.util.List;
+import static org.example.util.ExcelValueParser.parseDate;
+import static org.example.util.ExcelValueParser.parseDecimal;
+import static org.example.util.ExcelValueParser.parseInt;
+import static org.example.util.ExcelValueParser.trim;
 
 /**
  * 领料汇总导入：Excel DTO -> MaterialPickSummary 的转换与校验。
@@ -18,14 +17,6 @@ public final class MaterialPickSummaryImportUtil {
 
     private MaterialPickSummaryImportUtil() {
     }
-
-    private static final List<DateTimeFormatter> DATE_FORMATTERS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-            DateTimeFormatter.ofPattern("yyyy/M/d"),
-            DateTimeFormatter.ofPattern("yyyy.M.d"),
-            DateTimeFormatter.ofPattern("yyyyMMdd"),
-            DateTimeFormatter.ofPattern("M/d/yyyy")
-    );
 
     /** 领料汇总文件 -> 实体（fileName 在保存阶段上传图片后回填） */
     public static MaterialPickSummary toEntity(WorkOrderExcelDTO dto) {
@@ -54,49 +45,4 @@ public final class MaterialPickSummaryImportUtil {
         return null;
     }
 
-    private static String trim(String s) {
-        return s == null ? null : s.trim();
-    }
-
-    private static Integer parseInt(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return (int) Double.parseDouble(s.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static BigDecimal parseDecimal(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return new BigDecimal(s.trim().replace(",", "").replace(" ", ""));
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static LocalDate parseDate(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        String v = s.trim();
-        for (DateTimeFormatter f : DATE_FORMATTERS) {
-            try {
-                return LocalDate.parse(v, f);
-            } catch (DateTimeParseException ignored) {
-                // try next format
-            }
-        }
-        try {
-            long serial = (long) Double.parseDouble(v);
-            return LocalDate.of(1899, 12, 30).plusDays(serial);
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
-    }
 }

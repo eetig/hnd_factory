@@ -15,6 +15,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import static org.example.util.ExcelValueParser.trim;
+
 /**
  * document 模式的行级差量规划（变更-047）。
  *
@@ -166,7 +168,4 @@ public final class DocumentDiffPlanner {
                 && ImportDedupeUtil.isSameQty(s.getQty(), row.qty());
     }
 
-    private static String trim(String v) {
-        return v == null ? null : v.trim();
-    }
 }

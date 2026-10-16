@@ -4,11 +4,10 @@ import org.example.dto.WorkOrderExcelDTO;
 import org.example.entity.MaterialMovement;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.util.List;
+import static org.example.util.ExcelValueParser.parseDate;
+import static org.example.util.ExcelValueParser.parseDecimal;
+import static org.example.util.ExcelValueParser.parseInt;
+import static org.example.util.ExcelValueParser.trim;
 
 /**
  * 货物移动导入：Excel DTO -> MaterialMovement 的转换与校验。
@@ -17,14 +16,6 @@ public final class GoodsMoveImportUtil {
 
     private GoodsMoveImportUtil() {
     }
-
-    private static final List<DateTimeFormatter> DATE_FORMATTERS = List.of(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-            DateTimeFormatter.ofPattern("yyyy/M/d"),
-            DateTimeFormatter.ofPattern("yyyy.M.d"),
-            DateTimeFormatter.ofPattern("yyyyMMdd"),
-            DateTimeFormatter.ofPattern("M/d/yyyy")
-    );
 
     /** 货物移动文件 -> 物料移动实体 */
     public static MaterialMovement toEntity(WorkOrderExcelDTO dto) {
@@ -59,50 +50,4 @@ public final class GoodsMoveImportUtil {
         return null;
     }
 
-    private static String trim(String s) {
-        return s == null ? null : s.trim();
-    }
-
-    private static Integer parseInt(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(s.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static BigDecimal parseDecimal(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        try {
-            return new BigDecimal(s.trim().replace(",", "").replace(" ", ""));
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static LocalDate parseDate(String s) {
-        if (!StringUtils.hasText(s)) {
-            return null;
-        }
-        String v = s.trim();
-        for (DateTimeFormatter f : DATE_FORMATTERS) {
-            try {
-                return LocalDate.parse(v, f);
-            } catch (DateTimeParseException ignored) {
-                // try next format
-            }
-        }
-        // 兜底：Excel 日期序列号
-        try {
-            long serial = (long) Double.parseDouble(v);
-            return LocalDate.of(1899, 12, 30).plusDays(serial);
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
-    }
 }
