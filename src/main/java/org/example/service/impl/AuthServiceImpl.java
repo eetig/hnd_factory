@@ -1,5 +1,6 @@
 package org.example.service.impl;
 
+import cn.dev33.satoken.secure.BCrypt;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.example.dto.LoginDTO;
@@ -13,7 +14,6 @@ import org.example.mapper.SysRoleMapper;
 import org.example.mapper.SysRolePermissionMapper;
 import org.example.mapper.SysUserMapper;
 import org.example.service.AuthService;
-import org.example.util.BCryptUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -37,7 +37,9 @@ public class AuthServiceImpl implements AuthService {
         // 1. 查用户
         SysUser user = sysUserMapper.selectOne(
                 new QueryWrapper<SysUser>().eq("username", dto.getUsername()));
-        if (user == null || !BCryptUtil.matches(dto.getPassword(), user.getPassword())) {
+        // 口令或哈希为空一律视为不匹配（BCrypt.checkpw 遇 null 会抛异常），与原 BCryptUtil.matches 语义一致
+        if (user == null || user.getPassword() == null || dto.getPassword() == null
+                || !BCrypt.checkpw(dto.getPassword(), user.getPassword())) {
             throw new BusinessException("用户名或密码错误");
         }
         if (user.getStatus() != null && user.getStatus() != 1) {

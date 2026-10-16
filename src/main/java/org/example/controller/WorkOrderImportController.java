@@ -19,7 +19,6 @@ import org.example.entity.MaterialPickSummary;
 import org.example.entity.MaterialStock;
 import org.example.entity.ProductionInbound;
 import org.example.entity.WorkOrder;
-import org.example.feign.ImgFeignClient;
 import org.example.listener.WorkOrderImportExcelListener;
 import org.example.service.DocumentImportSaveService;
 import org.example.service.MaterialMovementService;
@@ -110,9 +109,6 @@ public class WorkOrderImportController {
     /** 图片上传与图片识别确认入口共用 */
     @Autowired
     private ImgUploader imgUploader;
-
-    @Autowired
-    private ImgFeignClient imgFeignClient;
 
     // ================= 接口1：解析预览（只解析，不入库） =================
     @SaCheckPermission("work_order:import")

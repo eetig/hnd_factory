@@ -28,9 +28,6 @@ public interface WorkOrderService {
     // 导入：前端解析好的工单列表 JSON
     ExcelResult<WorkOrderImportResultVO> importFromJson(List<WorkOrderExcelDTO> rows, boolean rollbackOnError);
 
-    // 导入分页预览（只解析不入库）
-    ExcelResult<WorkOrderPreviewVO> previewImport(MultipartFile file, String templateCode, long page, long size);
-
     /**
      * 工单列表：后端分页 + 后端条件查询（整改 2026-10-10），返回工单信息 + 物料图片 url。
      *

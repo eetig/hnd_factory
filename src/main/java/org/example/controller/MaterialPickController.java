@@ -30,11 +30,6 @@ public class MaterialPickController {
     @Autowired
     private MaterialPickSummaryService materialPickSummaryService;
 
-    @GetMapping("/test")
-    public String test() {
-        return "ok";
-    }
-
     /**
      * 领料汇总列表 —— 后端分页 + 后端条件查询。
      *

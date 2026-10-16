@@ -71,43 +71,6 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
         return doImport(rows == null ? List.of() : rows, rollbackOnError);
     }
 
-    // ================= 导入预览（分页，不入库） =================
-    @Override
-    public ExcelResult<WorkOrderPreviewVO> previewImport(MultipartFile file, String templateCode, long page, long size) {
-        List<WorkOrderExcelDTO> rows = parseExcel(file, templateCode);
-
-        long p = page < 1 ? 1 : page;
-        long s = size < 1 ? 20 : size;
-        int from = (int) Math.min((p - 1) * s, rows.size());
-        int to = (int) Math.min(from + s, rows.size());
-
-        List<WorkOrderPreviewRowVO> list = new ArrayList<>();
-        List<WorkOrderExcelDTO> pageRows = rows.subList(from, to);
-        for (int i = 0; i < pageRows.size(); i++) {
-            WorkOrder w = mapToEntity(pageRows.get(i));
-            WorkOrderPreviewRowVO row = new WorkOrderPreviewRowVO();
-            row.setRowNum(from + i + 1);
-            row.setOrderNo(w.getOrderNo());
-            row.setWorkOrderType(typeName(w.getOrderNo()));
-            row.setWorkOrder(w);
-            list.add(row);
-        }
-
-        WorkOrderPreviewVO vo = new WorkOrderPreviewVO();
-        vo.setPage(p);
-        vo.setSize(s);
-        vo.setTotal(rows.size());
-        vo.setTotalPage(s == 0 ? 0 : (rows.size() + s - 1) / s);
-        vo.setRows(list);
-
-        ExcelResult<WorkOrderPreviewVO> result = new ExcelResult<>();
-        result.setSuccess(true);
-        result.setMsg("解析成功");
-        result.setDataList(List.of(vo));
-        result.setTotalRow(rows.size());
-        return result;
-    }
-
     // 核心导入：解析+校验 -> 类型识别 -> upsert（order_no 唯一）
     private ExcelResult<WorkOrderImportResultVO> doImport(List<WorkOrderExcelDTO> rows, boolean rollbackOnError) {
         WorkOrderImportResultVO vo = new WorkOrderImportResultVO();
@@ -120,12 +83,12 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
         int rowNum = 0;
         for (WorkOrderExcelDTO dto : rows) {
             rowNum++;
-            WorkOrder w = mapToEntity(dto);
-            typeSummary.merge(typeName(w.getOrderNo()), 1, Integer::sum);
+            WorkOrder w = WorkOrderImportUtil.toEntity(dto);
+            typeSummary.merge(WorkOrderImportUtil.typeName(w.getOrderNo()), 1, Integer::sum);
 
-            String err = validate(w, rowNum);
+            String err = WorkOrderImportUtil.validate(w);
             if (err != null) {
-                errors.add(new WorkOrderImportResultVO.RowError(rowNum, err));
+                errors.add(new WorkOrderImportResultVO.RowError(rowNum, "第" + rowNum + "行：" + err));
                 continue;
             }
             validMap.put(w.getOrderNo(), w);
@@ -215,11 +178,6 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
         vo.setUpdateCount(toUpdate.size());
         vo.setTotal(uniqueMap.size());
         return vo;
-    }
-
-    // 工单号 -> 类型中文名（识别不出为"未知类型"）
-    private static String typeName(String orderNo) {
-        return WorkOrderImportUtil.typeName(orderNo);
     }
 
     // ================= 列表（工单 + 物料图片 url） =================
@@ -456,12 +414,4 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
         return result;
     }
 
-    private WorkOrder mapToEntity(WorkOrderExcelDTO dto) {
-        return WorkOrderImportUtil.toEntity(dto);
-    }
-
-    private String validate(WorkOrder w, int row) {
-        String err = WorkOrderImportUtil.validate(w);
-        return err == null ? null : "第" + row + "行：" + err;
-    }
 }
