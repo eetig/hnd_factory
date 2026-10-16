@@ -558,6 +558,10 @@ JOIN (
   -- 单独一个权限位而不是复用 tank_level:edit —— 将来要放开给非 admin 的维护员时，
   -- 只需给那个角色加这一位，不必动接口。
   SELECT 'admin', 'equipment:edit'                UNION ALL
+  -- 采购进度跟踪（2026-10-16，变更-091）：同样单独一个权限位、同样只授 admin。
+  -- 查询（/api/purchase/list）与其它列表接口一样免登录 —— 采购进度是厂内公开信息；
+  -- 只有「登记/改/删」需要这一位。
+  SELECT 'admin', 'purchase:edit'                 UNION ALL
   -- team_leader：仅查看（写权限一律只授 admin，见下方撤权段）
   SELECT 'team_leader', 'work_order:view'         UNION ALL
   SELECT 'team_leader', 'goods_move:view'         UNION ALL
@@ -602,7 +606,10 @@ WHERE r.`role_key` <> 'admin'
     'work_order:image:delete',
     'goods_move:import',
     'tank_level:edit',
-    'tank_level:delete'
+    'tank_level:delete',
+    -- ⚠️ 新增写权限位时**必须**追加到这里（本清单要求与 @SaCheckPermission 一一对应）：
+    -- 漏了它，被误授给非 admin 的新权限位就不会被这段撤掉，「写权限一律只授 admin」出现缺口。
+    'purchase:edit'
   );
 
 
@@ -1421,3 +1428,27 @@ WHERE `container_type` IS NULL;
 -- ALTER TABLE `material_pick_summary`
 --   DROP KEY `uk_document_no_material_date`,
 --   ADD UNIQUE KEY `uk_document_no_material` (`document_no`,`material_code`);
+
+
+-- -- 18) 采购进度跟踪（变更-091，2026-10-16）
+-- --
+-- --     ① 建表：执行第 1 部分末尾那段 `CREATE TABLE IF NOT EXISTS purchase_tracking`（幂等）。
+-- --
+-- --     ② 写权限：**新权限位必须同时授给 admin**，否则会出现
+-- --        「接口有 @SaCheckPermission 闸门、但没有任何角色拿得到钥匙」的哑火 ——
+-- --        表现是保存一律无权限，而单看代码完全看不出问题（变更-085 那类坑的权限版）。
+-- --        查询接口（/api/purchase/list）与其它列表一样**免登录**，所以不需要 view 权限位。
+-- INSERT INTO `sys_role_permission` (`role_id`, `permission_key`)
+-- SELECT r.`id`, 'purchase:edit'
+-- FROM `sys_role` r
+-- WHERE r.`role_key` = 'admin'
+--   AND NOT EXISTS (
+--     SELECT 1 FROM `sys_role_permission` p
+--     WHERE p.`role_id` = r.`id` AND p.`permission_key` = 'purchase:edit'
+--   );
+-- --
+-- --     复核：SELECT r.role_key, p.permission_key FROM sys_role_permission p
+-- --             JOIN sys_role r ON r.id = p.role_id
+-- --            WHERE p.permission_key = 'purchase:edit';      -- 期望恰好 1 行：admin
+-- --
+-- --     生产已于 2026-10-16 执行（见变更-091 的部署记录）。

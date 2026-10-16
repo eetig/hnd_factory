@@ -1,0 +1,89 @@
+package org.example.entity;
+
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+/**
+ * 采购进度跟踪（需求登记 → 下单 → 到货）。
+ *
+ * <p>列与页面对齐：序号（id）/ 需求人 / 提出需求日期 / 物料名称 / 物料编码 / 规格型号 /
+ * 要求到货日期 / 采购订单号 / 送货单号（+ 备注与时间戳）。
+ * 表定义见 {@code docs/schema.sql} 第 1 部分末尾。
+ *
+ * <p><b>物料名称与编码是快照文本，不是外键</b>：采购记录要能独立读懂，
+ * 历史单据也不该被后来的主数据改名影响。
+ *
+ * <p><b>物料编码刻意不做唯一键</b>：采购是流水账，同一物料在不同需求批次里本来就会重复出现；
+ * 而且 SAP 源数据里编码本身就不唯一（{@code material_master} 246 行 / 241 个编码，
+ * 有 5 个编码各对应两个**真实不同**的物料 —— 1000/500/250/100ml 四种瓶子共用一个外贸编码、
+ * {@code 114002501} 同时是「HND-2171前馏份」与「HND-2171过渡馏份」）。
+ * 强加唯一键会丢信息，所以这里只有普通索引。
+ *
+ * <p>⚠️ {@code requester} / {@code materialName} / {@code materialCode} /
+ * {@code purchaseOrderNo} / {@code deliveryNote} 在库里是 {@code NOT NULL DEFAULT ''}
+ * ——「还没下单」「还没到货」用**空串**表示，不是 NULL。理由见 schema.sql 第 170 行那段：
+ * MySQL 唯一索引不约束 NULL，可空列上将来想加唯一键会形同虚设。
+ * 所以服务端写库前要把 null 归一成空串（见 {@code PurchaseTrackingServiceImpl}）。
+ */
+@Data
+@TableName("purchase_tracking")
+public class PurchaseTracking {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+
+    /*
+     * ⚠️ 下面 9 个可编辑字段全部标 `updateStrategy = ALWAYS` —— 这是本项目的
+     * 「整行覆写」契约（与 EquipmentLedger 同一套，见 ADR 0002）：
+     * 保存时以提交上来的整份表单为准，**没填的字段就是空**。
+     * 不标 ALWAYS 的话 MyBatis-Plus 默认会跳过 null 字段 ⇒ 使用者把「要求到货日期」
+     * 或「规格型号」清空后保存，旧值会**留在库里**、界面上却显示已清空 —— 静默不一致。
+     */
+
+    /** 需求人 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String requester;
+
+    /** 提出需求日期 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDate requestDate;
+
+    /** 物料名称（快照） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String materialName;
+
+    /** 物料编码（快照） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String materialCode;
+
+    /** 规格型号 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String spec;
+
+    /** 要求到货日期 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDate requiredArrivalDate;
+
+    /** 采购订单号（还没下单时空串） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String purchaseOrderNo;
+
+    /** 送货单号（还没到货时空串） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String deliveryNote;
+
+    /** 备注 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String remark;
+
+    private LocalDateTime createTime;
+
+    private LocalDateTime updateTime;
+}
