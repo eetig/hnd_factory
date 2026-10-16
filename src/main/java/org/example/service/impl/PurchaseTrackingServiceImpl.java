@@ -14,7 +14,9 @@ import org.example.mapper.MaterialStockMapper;
 import org.example.mapper.PurchaseTrackingMapper;
 import org.example.service.PurchaseTrackingService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
@@ -87,7 +89,16 @@ public class PurchaseTrackingServiceImpl
         return wrapper;
     }
 
+    /**
+     * 保存（新增或修改）。
+     *
+     * <p>⚠️ `@Transactional` 不是可选项：这个方法写**两张表**（`purchase_tracking` 与
+     * 把编码登记进 `material_stock`）。没有事务时，第二张表失败就会出现
+     * 「采购行已经写进去、接口却报失败」—— 使用方以为没存上、再录一遍，于是多出一条重复记录。
+     * 本仓库其它"一次写多张表"的服务方法都带这个注解（也见 ADR-0002 那次 0 行静默成功的教训）。
+     */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Long save(PurchaseTrackingSaveDTO dto) {
         // ⚠️ 只有两条硬要求：**需求人**和**物料名称** —— 一条没有"谁要的/要什么"的记录没有意义。
         // 其余一律可空：采购订单号与送货单号本来就要后面才有（需求登记时还没下单），
@@ -193,7 +204,18 @@ public class PurchaseTrackingServiceImpl
         reg.setStorageDesc(REGISTER_LOCATION_DESC);
         reg.setStockQty(BigDecimal.ZERO);
         // 刻意不设 unit（采购记录里没有单位这一列）与 lastImportTime（它不是导入来的）
-        materialStockMapper.insert(reg);
+        try {
+            materialStockMapper.insert(reg);
+        } catch (DuplicateKeyException e) {
+            // 撞唯一键 uk_plant_material_location：**这正是我们想要的结果**，不是错误 ——
+            // 说明在上面 selectCount 与这次 insert 之间，有人（并发的另一次保存、或库存导入）
+            // 刚把这个编码登记进去了。编码已经能在总表里查到，所以吞掉异常、照常返回。
+            //
+            // ⚠️ 这里与储罐液位那次撞键**处理相反**，是有意的：那边撞的是
+            // 「同一天同一容器只能一条」的真实业务冲突，必须报出来让使用者改；
+            // 这边撞的是「这件事已经办好了」。若照那边报错，使用方会以为采购需求没存上，
+            // 实际已存上，再录一遍就多出一条重复记录 —— 比静默更糟。
+        }
     }
 
     // ===== 小工具 =====

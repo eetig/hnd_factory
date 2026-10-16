@@ -19,12 +19,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -164,6 +168,35 @@ class PurchaseTrackingServiceImplTest {
         when(baseMapper.deleteById(7L)).thenReturn(1);
         service.delete(7L);
         verify(materialStockMapper, never()).delete(any());
+    }
+
+    // ===== 两处从评审查出来的加固（变更-093）=====
+
+    @Test
+    @DisplayName("★ save 必须带 @Transactional：它写两张表，没事务会出现「行已写入、接口报失败」")
+    void saveIsTransactional() throws Exception {
+        Method save = PurchaseTrackingServiceImpl.class.getMethod("save", PurchaseTrackingSaveDTO.class);
+        assertTrue(
+                save.isAnnotationPresent(Transactional.class),
+                "save 写两张表（purchase_tracking 插入 + material_stock 采购登记），必须带 @Transactional："
+                        + "否则第二张表失败会让采购行已提交却报失败，使用方以为没存上、再录一遍就多一条重复记录。"
+                        + "（这条断言的存在意义就是：把这个注解删掉时会有测试变红。）");
+    }
+
+    @Test
+    @DisplayName("★ 登记撞唯一键（并发登记同一编码）→ 吞掉异常，采购行照样保存成功")
+    void toleratesConcurrentRegistration() {
+        PurchaseTrackingSaveDTO dto = dto();
+        dto.setMaterialCode("NEW-CODE-1");
+        when(baseMapper.insert(any(PurchaseTracking.class))).thenReturn(1);
+        when(materialStockMapper.selectCount(any())).thenReturn(0L);
+        // 模拟：selectCount 与 insert 之间，另一次保存/库存导入刚把这个编码登记进去了
+        when(materialStockMapper.insert(any(MaterialStock.class)))
+                .thenThrow(new DuplicateKeyException(
+                        "Duplicate entry '1503-NEW-CODE-1-0000' for key 'uk_plant_material_location'"));
+
+        assertDoesNotThrow(() -> service.save(dto));
+        verify(baseMapper).insert(any(PurchaseTracking.class));
     }
 
     // ===== 修改 / 删除的 0 行 =====
