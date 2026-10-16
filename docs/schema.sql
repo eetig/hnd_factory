@@ -453,6 +453,47 @@ CREATE TABLE IF NOT EXISTS `equipment_ledger` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='设备台账（静设备：位号/名称/规格/容器类型/封头容积/每mm液位对应量）';
 
 
+-- ---------------------------------------------------------------------------
+-- 采购进度跟踪（变更-091）
+--
+-- 这一页记的是「谁、哪天提出要什么料、要求哪天到、下了哪张采购单、到的哪张送货单」，
+-- 即**需求登记 → 下单 → 到货**一条线。物料名称与编码在这里是**快照文本**（不是外键）：
+-- 采购记录要能独立读懂，历史单据也不该被后来的主数据改名影响。
+--
+-- ⚠️ 物料编码**刻意不做唯一键**：
+--   ① 采购是流水账 —— 同一物料在不同需求批次里本来就会重复出现（这不算错误数据）；
+--   ② 源数据里编码本身就不唯一 —— `material_master` 实测 246 行 / 241 个编码，
+--      有 5 个编码各对应两个不同物料（见那张表的 `uk_code_name` 注释）。
+--
+-- ⚠️ 查编码要看清楚查哪张表（**两张表不是一回事**，2026-10-16 使用方澄清）：
+--   · `material_master` = **SAP 物料主数据**（SAP 侧维护，图片解析按名称反查编码/单位用）——
+--     采购登记**不写这张表**，写进去会污染 SAP 主数据、也会干扰反查；
+--   · `material_stock` = 库存 + **编码登记总表**（使用方指定）：采购登记进来的新编码落在这里，
+--     固定落在 plant_code=1503 / storage_location=0000 / storage_desc='采购登记（无库存）'，
+--     库存记 0。好处：不在任何真实仓里、一眼看出是采购登记的、
+--     被下一次库存导入清零但**永不删除**（该导入只清数量、保留行），
+--     且用「库位=0000」能一次查出所有采购登记过的编码。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `purchase_tracking` (
+  `id`                    bigint       NOT NULL AUTO_INCREMENT COMMENT '自增主键（页面上就是「序号」）',
+  `requester`             varchar(32)  NOT NULL DEFAULT '' COMMENT '需求人',
+  `request_date`          date         DEFAULT NULL COMMENT '提出需求日期',
+  `material_name`         varchar(128) NOT NULL DEFAULT '' COMMENT '物料名称（快照）',
+  `material_code`         varchar(32)  NOT NULL DEFAULT '' COMMENT '物料编码（快照）',
+  `spec`                  varchar(255) DEFAULT NULL COMMENT '规格型号',
+  `required_arrival_date` date         DEFAULT NULL COMMENT '要求到货日期',
+  `purchase_order_no`     varchar(64)  NOT NULL DEFAULT '' COMMENT '采购订单号（还没下单时留空）',
+  `delivery_note`         varchar(64)  NOT NULL DEFAULT '' COMMENT '送货单号（还没到货时留空）',
+  `remark`                varchar(255) DEFAULT NULL COMMENT '备注',
+  `create_time`           datetime     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time`           datetime     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_material_code` (`material_code`),
+  KEY `idx_purchase_order_no` (`purchase_order_no`),
+  KEY `idx_request_date` (`request_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采购进度跟踪（需求登记→下单→到货）';
+
+
 -- =============================================================================
 -- 第 2 部分：初始化数据（幂等，可重复执行）
 -- =============================================================================
