@@ -2,6 +2,7 @@ package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import org.example.component.ImageUrlBuilder;
 import org.example.component.ImgUploader;
 import org.example.dto.TankLevelImageVO;
 import org.example.entity.TankLevelImage;
@@ -12,7 +13,6 @@ import org.example.service.TankLevelImageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -42,9 +42,8 @@ public class TankLevelImageServiceImpl extends ServiceImpl<TankLevelImageMapper,
      */
     private static final Set<String> ALLOWED_IMAGE_EXT = Set.of("png", "jpg", "jpeg");
 
-    /** 图片对外基础路径：同源部署留空 → 前端拿到 /files/xxx 相对路径（契约 2.3） */
-    @Value("${image.base-url:}")
-    private String imageBaseUrl;
+    @Autowired
+    private ImageUrlBuilder imageUrlBuilder;
 
     @Autowired
     private ImgUploader imgUploader;
@@ -186,23 +185,9 @@ public class TankLevelImageServiceImpl extends ServiceImpl<TankLevelImageMapper,
     private TankLevelImageVO toVO(TankLevelImage image) {
         TankLevelImageVO vo = new TankLevelImageVO();
         vo.setImageId(image.getId());
-        vo.setUrl(toUrl(image.getFileName()));
-        vo.setThumbnailUrl(toThumbUrl(image.getFileName()));
+        vo.setUrl(imageUrlBuilder.urlOf(image.getFileName()));
+        vo.setThumbnailUrl(imageUrlBuilder.thumbUrlOf(image.getFileName()));
         return vo;
     }
 
-    /**
-     * 原图：固定 URL，纯字符串拼接。
-     *
-     * <p>不调 Feign 取预签名 URL：预签名每次都带新的 X-Amz-Date，浏览器按 URL 缓存，
-     * URL 一变就全部重下（变更-001 的根因）。
-     */
-    private String toUrl(String fileName) {
-        return StringUtils.hasText(fileName) ? imageBaseUrl + "/files/" + fileName : null;
-    }
-
-    /** 缩略图：固定 URL */
-    private String toThumbUrl(String fileName) {
-        return StringUtils.hasText(fileName) ? imageBaseUrl + "/thumbs/" + fileName : null;
-    }
 }

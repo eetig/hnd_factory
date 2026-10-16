@@ -1,6 +1,7 @@
 package org.example.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import org.example.component.ImageUrlBuilder;
 import org.example.dto.ImgResult;
 import org.example.dto.UploadResult;
 import org.example.dto.WorkOrderImageVO;
@@ -10,7 +11,6 @@ import org.example.feign.ImgFeignClient;
 import org.example.mapper.WorkOrderImageMapper;
 import org.example.service.WorkOrderImageService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -29,9 +29,8 @@ public class WorkOrderImageServiceImpl implements WorkOrderImageService {
     @Autowired
     private ImgFeignClient imgFeignClient;
 
-    /** 图片对外基础路径：同源部署留空，前端拿到相对路径（契约 2.3） */
-    @Value("${image.base-url:}")
-    private String imageBaseUrl;
+    @Autowired
+    private ImageUrlBuilder imageUrlBuilder;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -82,23 +81,9 @@ public class WorkOrderImageServiceImpl implements WorkOrderImageService {
     private WorkOrderImageVO toVO(WorkOrderImage img) {
         WorkOrderImageVO vo = new WorkOrderImageVO();
         vo.setImageId(img.getId());
-        vo.setUrl(toUrl(img.getFileName()));
-        vo.setThumbnailUrl(toThumbUrl(img.getFileName()));
+        vo.setUrl(imageUrlBuilder.urlOf(img.getFileName()));
+        vo.setThumbnailUrl(imageUrlBuilder.thumbUrlOf(img.getFileName()));
         return vo;
     }
 
-    /**
-     * 原图：固定 URL，纯字符串拼接。
-     *
-     * 不再调用 Feign：预签名 URL 每次都带新的 X-Amz-Date，浏览器按 URL 缓存，
-     * URL 一变就全部重下；且列表组装时会逐张远程调用（变更-001 根因 2、3）。
-     */
-    private String toUrl(String fileName) {
-        return StringUtils.hasText(fileName) ? imageBaseUrl + "/files/" + fileName : null;
-    }
-
-    /** 缩略图：固定 URL */
-    private String toThumbUrl(String fileName) {
-        return StringUtils.hasText(fileName) ? imageBaseUrl + "/thumbs/" + fileName : null;
-    }
 }

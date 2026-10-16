@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import org.example.component.ImageUrlBuilder;
 import org.example.dto.DateRangeQueryDTO;
 import org.example.dto.DocumentRowVO;
 import org.example.dto.MaterialDocQueryDTO;
@@ -14,7 +15,7 @@ import org.example.entity.ProductionInbound;
 import org.example.mapper.ProductionInboundMapper;
 import org.example.service.ProductionInboundService;
 import org.example.util.DocMaterialDateKey;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -36,9 +37,8 @@ import java.util.stream.Collectors;
 public class ProductionInboundServiceImpl extends ServiceImpl<ProductionInboundMapper, ProductionInbound>
         implements ProductionInboundService {
 
-    /** 图片对外基础路径：同源部署留空，前端拿到相对路径（契约 2.3） */
-    @Value("${image.base-url:}")
-    private String imageBaseUrl;
+    @Autowired
+    private ImageUrlBuilder imageUrlBuilder;
 
     /**
      * 按 (单据号 + 物料编码 + 日期) upsert：存在则更新，不存在则新增。
@@ -168,8 +168,8 @@ public class ProductionInboundServiceImpl extends ServiceImpl<ProductionInboundM
         vo.setUnit(p.getUnit());
         vo.setDate(p.getInboundDate());
         String fileName = p.getFileName();
-        vo.setImageUrl(toUrl(fileName));
-        vo.setThumbnailUrl(toThumbUrl(fileName));
+        vo.setImageUrl(imageUrlBuilder.urlOf(fileName));
+        vo.setThumbnailUrl(imageUrlBuilder.thumbUrlOf(fileName));
         vo.setFileName(fileName);
         return vo;
     }
@@ -324,23 +324,9 @@ public class ProductionInboundServiceImpl extends ServiceImpl<ProductionInboundM
         vo.setInboundQty(p.getInboundQty());
         vo.setUnit(p.getUnit());
         String fileName = p.getFileName();
-        vo.setImageUrl(toUrl(fileName));
-        vo.setThumbnailUrl(toThumbUrl(fileName));
+        vo.setImageUrl(imageUrlBuilder.urlOf(fileName));
+        vo.setThumbnailUrl(imageUrlBuilder.thumbUrlOf(fileName));
         return vo;
     }
 
-    /**
-     * 原图：固定 URL，纯字符串拼接。
-     *
-     * 不再调用 Feign：预签名 URL 每次都带新的 X-Amz-Date，浏览器按 URL 缓存，
-     * URL 一变就全部重下；且列表组装时会逐张远程调用（变更-001 根因 2、3）。
-     */
-    private String toUrl(String fileName) {
-        return StringUtils.hasText(fileName) ? imageBaseUrl + "/files/" + fileName : null;
-    }
-
-    /** 缩略图：固定 URL */
-    private String toThumbUrl(String fileName) {
-        return StringUtils.hasText(fileName) ? imageBaseUrl + "/thumbs/" + fileName : null;
-    }
 }
