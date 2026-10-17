@@ -45,7 +45,7 @@ public class PurchaseTrackingVO {
     /** 规格型号 */
     private String spec;
 
-    /** 类别（备件/原料/设备/其他；NULL = 未分类） */
+    /** 类别（备件/五金/原料/设备/其他；NULL = 未分类） */
     private String category;
 
     /** 需求数量（NULL = 历史数据未记） */

@@ -74,7 +74,7 @@ public class PurchaseTracking {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String spec;
 
-    /** 类别（备件 / 原料 / 设备 / 其他；变更-096 起） */
+    /** 类别（备件/五金 / 原料 / 设备 / 其他；变更-096 起） */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String category;
 

@@ -46,7 +46,7 @@ public class PurchaseTrackingSaveDTO {
     @Size(max = 255, message = "规格型号最多 255 个字")
     private String spec;
 
-    /** 类别（备件/原料/设备/其他；变更-096 起，可空） */
+    /** 类别（备件/五金/原料/设备/其他；变更-096 起，可空） */
     @Size(max = 16, message = "类别最多 16 个字")
     private String category;
 

@@ -31,6 +31,6 @@ public class PurchaseTrackingQueryDTO extends PageQueryDTO {
     /** 派生状态筛选（PENDING_OA / WAITING / DUE_SOON / OVERDUE / ARRIVED / PARTIAL），空白表示不限 */
     private String status;
 
-    /** 类别筛选（备件 / 原料 / 设备 / 其他），空白表示不限 */
+    /** 类别筛选（备件/五金 / 原料 / 设备 / 其他），空白表示不限 */
     private String category;
 }

@@ -492,7 +492,7 @@ CREATE TABLE IF NOT EXISTS `purchase_tracking` (
   `material_name`         varchar(128) NOT NULL DEFAULT '' COMMENT '物料名称（快照）',
   `material_code`         varchar(32)  NOT NULL DEFAULT '' COMMENT '物料编码（快照）',
   `spec`                  varchar(255) DEFAULT NULL COMMENT '规格型号',
-  `category`              varchar(16)  DEFAULT NULL COMMENT '类别（备件/原料/设备/其他；变更-096 起；NULL = 未分类，页面显示「—」）',
+  `category`              varchar(16)  DEFAULT NULL COMMENT '类别（备件/五金/原料/设备/其他；变更-096 起，变更-097c 加五金；NULL = 未分类，页面显示「—」）',
   `quantity`              decimal(12,3) DEFAULT NULL COMMENT '需求数量（变更-096 起；NULL = 历史数据未记，页面显示「—」）',
   `unit`                  varchar(16)  DEFAULT NULL COMMENT '单位（个/台/套/件/米/公斤…；变更-096 起；NULL = 未填）',
   `required_arrival_date` date         DEFAULT NULL COMMENT '要求到货日期（超期/临期的判定基准，源自 OA 单上的希望到货日期）',
@@ -1491,7 +1491,7 @@ WHERE `container_type` IS NULL;
 -- --
 -- --     ① 加列（MySQL 8 不支持 ADD COLUMN IF NOT EXISTS，先核对再执行；重复执行会报 Duplicate column）：
 -- ALTER TABLE `purchase_tracking`
---   ADD COLUMN `category`            varchar(16)   DEFAULT NULL COMMENT '类别（备件/原料/设备/其他；变更-096 起；NULL = 未分类，页面显示「—」）' AFTER `spec`,
+--   ADD COLUMN `category`            varchar(16)   DEFAULT NULL COMMENT '类别（备件/五金/原料/设备/其他；变更-096 起，变更-097c 加五金；NULL = 未分类，页面显示「—」）' AFTER `spec`,
 --   ADD COLUMN `quantity`            decimal(12,3) DEFAULT NULL COMMENT '需求数量（变更-096 起；NULL = 历史数据未记，页面显示「—」）' AFTER `category`,
 --   ADD COLUMN `unit`                varchar(16)   DEFAULT NULL COMMENT '单位（个/台/套/件/米/公斤…；变更-096 起；NULL = 未填）' AFTER `quantity`,
 --   ADD COLUMN `received_quantity`   decimal(12,3) DEFAULT NULL COMMENT '实际到货数量（变更-096 起；NULL = 未记；< quantity 即部分到货）' AFTER `delivery_note`,
