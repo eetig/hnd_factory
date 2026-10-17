@@ -68,6 +68,10 @@ public class PurchaseTrackingSaveDTO {
     @Size(max = 64, message = "OA 单号最多 64 个字")
     private String oaNo;
 
+    /** OA 表单链接（变更-100 起，可空，≤512）：从浏览器地址栏复制的整条 URL，点单号直达 */
+    @Size(max = 512, message = "OA 链接最多 512 个字符")
+    private String oaUrl;
+
     /** 送货单图片路径（还没到货时留空，≤64） */
     @Size(max = 64, message = "送货单最多 64 个字")
     private String deliveryNote;

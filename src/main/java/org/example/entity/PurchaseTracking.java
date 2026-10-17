@@ -104,6 +104,18 @@ public class PurchaseTracking {
     @TableField(value = "purchase_order_no", updateStrategy = FieldStrategy.ALWAYS)
     private String oaNo;
 
+    /**
+     * OA 表单链接（变更-100 起；还没粘过时为空串）。
+     *
+     * <p>为什么要存整条 URL 而不是 favId：OA 的「按单号筛列表」地址
+     * （{@code /ssc/fee/#/j_path=…&criteria=docNumber:…}）在**未登录时会被 302 到
+     * login.jsp，登录后落回门户首页**（2026-10-18 实测），所以靠单号拼链接这条路走不通；
+     * 只有用户从浏览器地址栏复制的那条 {@code fsscFeeMain.do?method=view&fdId=…}
+     * 才能直达表单。存整条 URL 的好处是零解析、零猜测，用户粘什么就打开什么。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String oaUrl;
+
     /** 送货单图片路径（还没到货时空串；变更-094 起是图片，老数据可能是文本） */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String deliveryNote;

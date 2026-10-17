@@ -254,6 +254,7 @@ public class PurchaseTrackingServiceImpl
         // 库定义 NOT NULL DEFAULT '' 的两列：null 归一成空串（"还没提单/还没到货"就是空串）
         row.setMaterialCode(blankIfNull(dto.getMaterialCode()));
         row.setOaNo(blankIfNull(dto.getOaNo()));
+        row.setOaUrl(blankIfNull(dto.getOaUrl()));
         row.setDeliveryNote(blankIfNull(dto.getDeliveryNote()));
         // 可空的几列保持 null 语义（清空时真的写 NULL，靠实体的 ALWAYS 策略）
         row.setSpec(trimToNull(dto.getSpec()));
@@ -439,6 +440,7 @@ public class PurchaseTrackingServiceImpl
         vo.setUnit(row.getUnit());
         vo.setRequiredArrivalDate(row.getRequiredArrivalDate());
         vo.setOaNo(row.getOaNo());
+        vo.setOaUrl(row.getOaUrl());
         vo.setDeliveryNote(row.getDeliveryNote());
         vo.setReceivedQuantity(row.getReceivedQuantity());
         vo.setActualArrivalDate(row.getActualArrivalDate());

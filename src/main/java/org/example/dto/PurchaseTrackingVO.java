@@ -63,6 +63,9 @@ public class PurchaseTrackingVO {
     /** OA 单号（空串 = 还没提单）。变更-096 起语义明确：是 OA 提单号，不是采购订单号 */
     private String oaNo;
 
+    /** OA 表单链接（空串 = 还没粘过；变更-100 起）。页面把单号渲染成指向它的链接 */
+    private String oaUrl;
+
     /** 送货单图片路径（空串 = 还没到货） */
     private String deliveryNote;
 

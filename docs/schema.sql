@@ -498,6 +498,7 @@ CREATE TABLE IF NOT EXISTS `purchase_tracking` (
   `unit`                  varchar(16)  DEFAULT NULL COMMENT '单位（个/台/套/件/米/公斤…；变更-096 起；NULL = 未填）',
   `required_arrival_date` date         DEFAULT NULL COMMENT '要求到货日期（超期/临期的判定基准，源自 OA 单上的希望到货日期）',
   `purchase_order_no`     varchar(64)  NOT NULL DEFAULT '' COMMENT 'OA 单号（变更-096 起语义明确：这是**OA 提单号**，不是采购下给供应商的订单号）；还没提单时留空',
+  `oa_url`                varchar(512) NOT NULL DEFAULT '' COMMENT 'OA 表单链接（变更-100 起；从浏览器地址栏复制的整条 URL，页面把单号渲染成指向它的链接；空串 = 还没粘过）',
   `delivery_note`         varchar(64)  NOT NULL DEFAULT '' COMMENT '送货单**图片路径**（/files/xxx，ADR-0004 固定拼接；变更-094 起是图片，不再填单号）；空串 = 还没到货；历史上存过文本单号，老数据按文本原样显示',
   `received_quantity`     decimal(12,3) DEFAULT NULL COMMENT '实际到货数量（变更-096 起；NULL = 未记；< quantity 即部分到货）',
   `actual_arrival_date`   date         DEFAULT NULL COMMENT '实际到货日期（变更-096 起；NULL = 还没到货；算出「提前/延后几天」靠它）',
@@ -1566,3 +1567,27 @@ WHERE `container_type` IS NULL;
 -- --     CREATE TABLE purchase_tracking_bak_098 AS SELECT id, purpose FROM purchase_tracking;
 -- --
 -- --     生产执行时间：**2026-10-18 07:2x 已执行**（见变更-098 的部署记录）。
+
+-- -- 22) 采购需求详情：加「OA 表单链接」（变更-100，2026-10-18）
+-- --
+-- --     使用方要求「点单号直接跳到 OA 里那张单」。**试过用单号现拼链接，走不通**：
+-- --     OA 的「按单号筛列表」地址 /ssc/fee/#/j_path=%2FlistAll&…&criteria=docNumber:<单号>
+-- --     在未登录时会被 302 到 login.jsp，**登录后落回门户首页**（2026-10-18 实测），
+-- --     不会回到那个 hash；表单页 fsscFeeMain.do?method=view 又只认 fdId。
+-- --     ⇒ 只能让使用方把表单地址复制进来存着（零解析、用户粘什么就打开什么）。
+-- --
+-- --     ① 加列（与 oaNo 同口径：NOT NULL DEFAULT ''，空串=未粘；MySQL 8 不支持 IF NOT EXISTS）：
+-- ALTER TABLE `purchase_tracking`
+--   ADD COLUMN `oa_url` varchar(512) NOT NULL DEFAULT ''
+--   COMMENT 'OA 表单链接（变更-100 起；整条 URL，点单号直达；空串 = 还没粘过）' AFTER `purchase_order_no`;
+-- --
+-- --     改前核对（只读）：
+-- SELECT COUNT(*) AS rows_before FROM `purchase_tracking`;
+-- SHOW FULL COLUMNS FROM `purchase_tracking`;
+-- --
+-- --     改后复核（只读）：
+-- SELECT COUNT(*) AS rows_after FROM `purchase_tracking`;          -- 期望与 rows_before 一致
+-- SELECT id, CONCAT('[', oa_url, ']') FROM `purchase_tracking`;    -- 期望全是「[]」（空串）
+-- --
+-- --     回滚（无损）：
+-- ALTER TABLE `purchase_tracking` DROP COLUMN `oa_url`;
