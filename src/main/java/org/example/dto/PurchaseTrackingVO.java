@@ -45,6 +45,9 @@ public class PurchaseTrackingVO {
     /** 规格型号 */
     private String spec;
 
+    /** 用途（这料拿去干什么用；变更-098 起） */
+    private String purpose;
+
     /** 类别（备件/五金/原料/设备/其他；NULL = 未分类） */
     private String category;
 

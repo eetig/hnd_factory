@@ -492,6 +492,7 @@ CREATE TABLE IF NOT EXISTS `purchase_tracking` (
   `material_name`         varchar(128) NOT NULL DEFAULT '' COMMENT '物料名称（快照）',
   `material_code`         varchar(32)  NOT NULL DEFAULT '' COMMENT '物料编码（快照）',
   `spec`                  varchar(255) DEFAULT NULL COMMENT '规格型号',
+  `purpose`               varchar(255) DEFAULT NULL COMMENT '用途（这料拿去干什么用；变更-098 起；NULL = 未填）',
   `category`              varchar(16)  DEFAULT NULL COMMENT '类别（备件/五金/原料/设备/其他；变更-096 起，变更-097c 加五金；NULL = 未分类，页面显示「—」）',
   `quantity`              decimal(12,3) DEFAULT NULL COMMENT '需求数量（变更-096 起；NULL = 历史数据未记，页面显示「—」）',
   `unit`                  varchar(16)  DEFAULT NULL COMMENT '单位（个/台/套/件/米/公斤…；变更-096 起；NULL = 未填）',
@@ -1538,3 +1539,30 @@ WHERE `container_type` IS NULL;
 -- --     执行后复核：17 列（原 12 + 新 5）；行数仍为 1；那一行的 5 个新列全为 NULL；
 -- --                 purchase_order_no 注释已变为「OA 单号…」。
 -- --     回滚锚点：镜像 hnd_factory:pre-096（=旧镜像 50c6b1e9），jar 备份 hnd_factory.jar.bak-20261017-171800。
+
+
+-- -- 21) 采购需求详情：加「用途」（变更-098，2026-10-18）
+-- --
+-- --     使用方要求「规格型号之后加一栏，叫用途」——记这料拿去干什么用。
+-- --     可空：历史行保持 NULL，页面显示「—」，不做回填。
+-- --
+-- --     ① 加列（MySQL 8 不支持 ADD COLUMN IF NOT EXISTS，重复执行会报 Duplicate column）：
+-- ALTER TABLE `purchase_tracking`
+--   ADD COLUMN `purpose` varchar(255) DEFAULT NULL
+--   COMMENT '用途（这料拿去干什么用；变更-098 起；NULL = 未填）' AFTER `spec`;
+-- --
+-- --     改前核对（只读）：
+-- SELECT COUNT(*) AS rows_before FROM `purchase_tracking`;
+-- SHOW FULL COLUMNS FROM `purchase_tracking`;
+-- --
+-- --     改后复核（只读）：
+-- SELECT COUNT(*) AS rows_after FROM `purchase_tracking`;   -- 期望与 rows_before 一致
+-- SHOW FULL COLUMNS FROM `purchase_tracking` LIKE 'purpose';
+-- --     期望：1 列、Default 为 NULL、注释以「用途」开头；另 SELECT * LIMIT 1 该列为 NULL。
+-- --
+-- --     回滚（无损）：
+-- ALTER TABLE `purchase_tracking` DROP COLUMN `purpose`;
+-- --     ⚠️ 回滚前备份该列数据：
+-- --     CREATE TABLE purchase_tracking_bak_098 AS SELECT id, purpose FROM purchase_tracking;
+-- --
+-- --     生产执行时间：**2026-10-18 07:2x 已执行**（见变更-098 的部署记录）。

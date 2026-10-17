@@ -187,6 +187,7 @@ public class PurchaseTrackingServiceImpl
                     .or().like(PurchaseTracking::getMaterialName, trimmedKeyword)
                     .or().like(PurchaseTracking::getMaterialCode, trimmedKeyword)
                     .or().like(PurchaseTracking::getSpec, trimmedKeyword)
+                    .or().like(PurchaseTracking::getPurpose, trimmedKeyword)
                     .or().like(PurchaseTracking::getOaNo, trimmedKeyword)
                     .or().like(PurchaseTracking::getDeliveryNote, trimmedKeyword));
         }
@@ -256,6 +257,7 @@ public class PurchaseTrackingServiceImpl
         row.setDeliveryNote(blankIfNull(dto.getDeliveryNote()));
         // 可空的几列保持 null 语义（清空时真的写 NULL，靠实体的 ALWAYS 策略）
         row.setSpec(trimToNull(dto.getSpec()));
+        row.setPurpose(trimToNull(dto.getPurpose()));
         row.setRemark(trimToNull(dto.getRemark()));
         row.setRequiredArrivalDate(dto.getRequiredArrivalDate());
         // 变更-096 新增的 5 列
@@ -431,6 +433,7 @@ public class PurchaseTrackingServiceImpl
         vo.setMaterialName(row.getMaterialName());
         vo.setMaterialCode(row.getMaterialCode());
         vo.setSpec(row.getSpec());
+        vo.setPurpose(row.getPurpose());
         vo.setCategory(row.getCategory());
         vo.setQuantity(row.getQuantity());
         vo.setUnit(row.getUnit());
