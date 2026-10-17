@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  *
  * <h2>范围与口径</h2>
  * <p>只推**已提单但还没到货**的行，并且只挑出超期与临期两种状态 ——
- * 「待提OA」不该催采购（是我们自己还没提单），「已到货」没什么可催的。
+ * 「待提单」不该催采购（是我们自己还没提单），「已到货」没什么可催的。
  * 状态口径**完全复用** {@link PurchaseTrackingStatus}，不在这里另写一套判断。
  *
  * <h2>为什么一天只推一条汇总，而不是状态一变就推</h2>
@@ -173,7 +173,7 @@ public class PurchaseAlertService {
         int shown = 0;
         for (PurchaseTracking row : alerts) {
             if (shown >= MAX_ROWS_IN_MESSAGE) {
-                sb.append("\n> 还有 ").append(alerts.size() - shown).append(" 条未列出，请到「采购进度跟踪」页查看\n");
+                sb.append("\n> 还有 ").append(alerts.size() - shown).append(" 条未列出，请到「采购需求详情」页查看\n");
                 break;
             }
             PurchaseTrackingStatus status = PurchaseTrackingStatus.of(row, today);

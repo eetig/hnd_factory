@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 「采购进度跟踪」列表项（页面上就是那一行）。
+ * 「采购需求详情」列表项（页面上就是那一行）。
  *
  * <p>前半段字段与实体一一对应（物料名称与编码在本表里是快照文本，见实体注释）；
  * <b>后半段是本表不存在的派生列</b>（{@code status} / {@code overdueDays} /
@@ -86,13 +86,13 @@ public class PurchaseTrackingVO {
      */
     private String status;
 
-    /** 派生状态的中文文案（待提OA / 等货 / 临期 / 超期 / 已到货 / 部分到货） */
+    /** 派生状态的中文文案（待提单 / 等货 / 临期 / 超期 / 已到货 / 部分到货） */
     private String statusLabel;
 
     /** 超期天数（只有 status=OVERDUE 时非空） */
     private Integer overdueDays;
 
-    /** 距要求到货日的天数（已到货、待提OA 或没有要求到货日时为空；当天 = 0） */
+    /** 距要求到货日的天数（已到货、待提单 或没有要求到货日时为空；当天 = 0） */
     private Integer daysToDue;
 
     /** 是否部分到货（需求数量与到货数量都填了，且到货 < 需求） */

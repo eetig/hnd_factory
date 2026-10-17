@@ -4,7 +4,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 /**
- * 「采购进度跟踪」汇总接口的查询条件。
+ * 「采购需求详情」汇总接口的查询条件。
  *
  * <p>继承 {@link DateRangeQueryDTO} 而不是 {@code PurchaseTrackingQueryDTO}：
  * 汇总不是记录页，**不该被迫接收一对用不上的 pageNum / pageSize**

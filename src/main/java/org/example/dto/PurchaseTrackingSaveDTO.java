@@ -7,7 +7,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
- * 「采购进度跟踪」的保存入参（白名单）。
+ * 「采购需求详情」的保存入参（白名单）。
  *
  * <p>为什么不直接收实体（{@code MaterialStockController} 那种写法）：收实体等于让调用方
  * 任意指定主键与时间戳等列。本项目已经把这条定为不变式（见 EquipmentSaveDTO 的注释），

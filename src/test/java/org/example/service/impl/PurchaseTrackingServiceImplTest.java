@@ -41,7 +41,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 采购进度跟踪的服务层单测（变更-091）。
+ * 采购需求详情的服务层单测（变更-091）。
  *
  * <p>覆盖三类：① 必填校验只卡「需求人 + 物料名称」；② 写库前的归一化
  * （null → 空串给 NOT NULL DEFAULT '' 的列，清空可空列写 NULL）；③ **物料登记**的四条规则
@@ -381,20 +381,20 @@ class PurchaseTrackingServiceImplTest {
         assertEquals("", result.getRecords().get(0).getMaterialCode());
         assertEquals(1, query.resolvedPageNum());
         assertEquals(10, query.resolvedPageSize());
-        // 派生状态必须在 VO 上算好（前端不重算口径）：没 OA 单号 = 待提OA
+        // 派生状态必须在 VO 上算好（前端不重算口径）：没 OA 单号 = 待提单
         assertEquals("PENDING_OA", result.getRecords().get(0).getStatus());
-        assertEquals("待提OA", result.getRecords().get(0).getStatusLabel());
+        assertEquals("待提单", result.getRecords().get(0).getStatusLabel());
         assertNull(result.getRecords().get(0).getOverdueDays());
     }
 
     // ===== 派生状态（变更-096）=====
 
     @Test
-    @DisplayName("★ 派生状态六态：待提OA / 等货 / 临期 / 超期 / 已到货 / 部分到货")
+    @DisplayName("★ 派生状态六态：待提单 / 等货 / 临期 / 超期 / 已到货 / 部分到货")
     void derivesStatusForEveryBranch() {
         LocalDate today = LocalDate.of(2026, 10, 17);
 
-        // 没 OA 单号 → 待提OA（此时有没有到货日期都不算超期，因为还没提单，催不到采购头上）
+        // 没 OA 单号 → 待提单（此时有没有到货日期都不算超期，因为还没提单，催不到采购头上）
         PurchaseTracking pendingOa = statusRow("", "", LocalDate.of(2026, 10, 1));
         assertEquals("PENDING_OA", PurchaseTrackingStatus.of(pendingOa, today).name());
 

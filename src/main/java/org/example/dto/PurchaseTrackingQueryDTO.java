@@ -4,7 +4,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 /**
- * 「采购进度跟踪」列表的查询条件：关键字 + 提出需求日期区间 + 状态/类别 + 分页。
+ * 「采购需求详情」列表的查询条件：关键字 + 提出需求日期区间 + 状态/类别 + 分页。
  *
  * <p>日期区间复用 {@link DateRangeQueryDTO} 的 {@code startDate} / {@code endDate}，
  * 在服务端作用于**提出需求日期**（{@code request_date}）—— 页面上的日期筛选框就标着这个含义。
@@ -17,7 +17,7 @@ import lombok.EqualsAndHashCode;
  * <p>变更-096 加了 {@code status} 与 {@code category} 两个筛选：
  * <ul>
  *   <li>{@code category} 是**真列**，直接在 SQL 里等值过滤；</li>
- *   <li>{@code status} 是**派生状态**（待提OA/等货/临期/超期/已到货/部分到货），库里没有这一列，
+ *   <li>{@code status} 是**派生状态**（待提单/等货/临期/超期/已到货/部分到货），库里没有这一列，
  *       处理方式见 {@code PurchaseTrackingServiceImpl#listPage} 的说明。</li>
  * </ul>
  */

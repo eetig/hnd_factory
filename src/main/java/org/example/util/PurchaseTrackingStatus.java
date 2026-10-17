@@ -32,7 +32,7 @@ import java.time.temporal.ChronoUnit;
 public enum PurchaseTrackingStatus {
 
     /** 已登记需求，但还没提单到 OA */
-    PENDING_OA("待提OA"),
+    PENDING_OA("待提单"),
 
     /** 已提单、未到货，且还不到临期 */
     WAITING("等货"),
