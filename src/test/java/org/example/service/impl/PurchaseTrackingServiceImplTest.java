@@ -10,6 +10,7 @@ import org.example.exception.BusinessException;
 import org.example.mapper.MaterialStockMapper;
 import org.example.mapper.PurchaseTrackingMapper;
 import org.example.feign.ImgFeignClient;
+import org.example.util.PurchaseTrackingStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -110,11 +111,48 @@ class PurchaseTrackingServiceImplTest {
         verify(baseMapper).insert(captor.capture());
         PurchaseTracking written = captor.getValue();
         assertEquals("", written.getMaterialCode(), "NOT NULL DEFAULT '' 的列必须是空串而不是 null");
-        assertEquals("", written.getPurchaseOrderNo());
+        assertEquals("", written.getOaNo());
         assertEquals("", written.getDeliveryNote());
         assertNull(written.getSpec());
         assertNull(written.getRemark());
         assertNull(written.getRequiredArrivalDate());
+        // 变更-096 的 5 个新列：留空时必须是 NULL（页面显示「—」靠它），不是 0 或空串
+        assertNull(written.getCategory());
+        assertNull(written.getQuantity());
+        assertNull(written.getUnit());
+        assertNull(written.getReceivedQuantity());
+        assertNull(written.getActualArrivalDate());
+    }
+
+    @Test
+    @DisplayName("★ 数量校验：需求数量必须 > 0；到货数量不能超过需求数量")
+    void rejectsInvalidQuantities() {
+        PurchaseTrackingSaveDTO zero = dto();
+        zero.setQuantity(new BigDecimal("0"));
+        assertEquals("需求数量必须大于 0",
+                assertThrows(BusinessException.class, () -> service.save(zero)).getMessage());
+
+        PurchaseTrackingSaveDTO negative = dto();
+        negative.setReceivedQuantity(new BigDecimal("-1"));
+        assertEquals("实际到货数量不能是负数",
+                assertThrows(BusinessException.class, () -> service.save(negative)).getMessage());
+
+        PurchaseTrackingSaveDTO over = dto();
+        over.setQuantity(new BigDecimal("3"));
+        over.setReceivedQuantity(new BigDecimal("5"));
+        assertTrue(assertThrows(BusinessException.class, () -> service.save(over))
+                .getMessage().startsWith("实际到货数量不能大于需求数量"));
+
+        // 部分到货是合法的：不做拦截
+        PurchaseTrackingSaveDTO partial = dto();
+        partial.setQuantity(new BigDecimal("3"));
+        partial.setReceivedQuantity(new BigDecimal("2"));
+        when(baseMapper.insert(any(PurchaseTracking.class))).thenReturn(1);
+        when(materialStockMapper.selectCount(any())).thenReturn(0L);
+        service.save(partial);
+        ArgumentCaptor<PurchaseTracking> captor = ArgumentCaptor.forClass(PurchaseTracking.class);
+        verify(baseMapper).insert(captor.capture());
+        assertEquals(new BigDecimal("2"), captor.getValue().getReceivedQuantity());
     }
 
     // ===== 物料登记 =====
@@ -325,7 +363,7 @@ class PurchaseTrackingServiceImplTest {
         row.setRequestDate(LocalDate.of(2026, 10, 1));
         row.setMaterialName("氟化塑料瓶");
         row.setMaterialCode("");
-        row.setPurchaseOrderNo("");
+        row.setOaNo("");
         row.setDeliveryNote("");
 
         Page<PurchaseTracking> page = new Page<>(1, 10);
@@ -343,5 +381,84 @@ class PurchaseTrackingServiceImplTest {
         assertEquals("", result.getRecords().get(0).getMaterialCode());
         assertEquals(1, query.resolvedPageNum());
         assertEquals(10, query.resolvedPageSize());
+        // 派生状态必须在 VO 上算好（前端不重算口径）：没 OA 单号 = 待提OA
+        assertEquals("PENDING_OA", result.getRecords().get(0).getStatus());
+        assertEquals("待提OA", result.getRecords().get(0).getStatusLabel());
+        assertNull(result.getRecords().get(0).getOverdueDays());
+    }
+
+    // ===== 派生状态（变更-096）=====
+
+    @Test
+    @DisplayName("★ 派生状态六态：待提OA / 等货 / 临期 / 超期 / 已到货 / 部分到货")
+    void derivesStatusForEveryBranch() {
+        LocalDate today = LocalDate.of(2026, 10, 17);
+
+        // 没 OA 单号 → 待提OA（此时有没有到货日期都不算超期，因为还没提单，催不到采购头上）
+        PurchaseTracking pendingOa = statusRow("", "", LocalDate.of(2026, 10, 1));
+        assertEquals("PENDING_OA", PurchaseTrackingStatus.of(pendingOa, today).name());
+
+        // 有单号、没送货单、要求到货日还很远 → 等货
+        PurchaseTracking waiting = statusRow("OA-1", "", today.plusDays(10));
+        assertEquals("WAITING", PurchaseTrackingStatus.of(waiting, today).name());
+
+        // 提前 3 天（含当天）→ 临期
+        PurchaseTracking dueSoon = statusRow("OA-2", "", today.plusDays(3));
+        assertEquals("DUE_SOON", PurchaseTrackingStatus.of(dueSoon, today).name());
+        PurchaseTracking dueToday = statusRow("OA-3", "", today);
+        assertEquals("DUE_SOON", PurchaseTrackingStatus.of(dueToday, today).name());
+        assertEquals(0, PurchaseTrackingStatus.daysToDue(dueToday, today));
+
+        // 过了要求到货日 → 超期，且能算出超期天数
+        PurchaseTracking overdue = statusRow("OA-4", "", today.minusDays(5));
+        assertEquals("OVERDUE", PurchaseTrackingStatus.of(overdue, today).name());
+        assertEquals(5, PurchaseTrackingStatus.overdueDays(overdue, today));
+
+        // 有送货单 → 已到货（到货之后即使晚了很多天也不该继续算超期）
+        PurchaseTracking arrived = statusRow("OA-5", "/files/a.png", today.minusDays(30));
+        assertEquals("ARRIVED", PurchaseTrackingStatus.of(arrived, today).name());
+        assertNull(PurchaseTrackingStatus.overdueDays(arrived, today));
+
+        // 到货数量 < 需求数量 → 部分到货
+        PurchaseTracking partial = statusRow("OA-6", "/files/b.png", today.minusDays(30));
+        partial.setQuantity(new BigDecimal("3"));
+        partial.setReceivedQuantity(new BigDecimal("2"));
+        assertEquals("PARTIAL", PurchaseTrackingStatus.of(partial, today).name());
+
+        // 数量缺失时判不出缺口 → 按已到货处理（历史数据没有数量列，不能凭空猜）
+        PurchaseTracking noQty = statusRow("OA-7", "/files/c.png", today);
+        assertEquals("ARRIVED", PurchaseTrackingStatus.of(noQty, today).name());
+    }
+
+    @Test
+    @DisplayName("汇总：按派生状态分别计数，总数等于各状态之和")
+    void summaryCountsEveryStatus() {
+        LocalDate today = LocalDate.now();
+        PurchaseTracking overdue = statusRow("OA-1", "", today.minusDays(2));
+        PurchaseTracking dueSoon = statusRow("OA-2", "", today.plusDays(1));
+        PurchaseTracking arrived = statusRow("OA-3", "/files/a.png", today);
+        PurchaseTracking pendingOa = statusRow("", "", null);
+        when(baseMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(overdue, dueSoon, arrived, pendingOa));
+
+        var summary = service.summary(new org.example.dto.PurchaseTrackingSummaryQueryDTO());
+        assertEquals(4, summary.getTotal());
+        assertEquals(1, summary.getOverdue());
+        assertEquals(1, summary.getDueSoon());
+        assertEquals(1, summary.getArrived());
+        assertEquals(1, summary.getPendingOa());
+        assertEquals(0, summary.getWaiting());
+        assertEquals(0, summary.getPartial());
+    }
+
+    /** 造一行只关心「OA 单号 / 送货单 / 要求到货日」的记录 */
+    private static PurchaseTracking statusRow(String oaNo, String deliveryNote, LocalDate requiredArrivalDate) {
+        PurchaseTracking row = new PurchaseTracking();
+        row.setRequester("张三");
+        row.setMaterialName("球阀");
+        row.setOaNo(oaNo);
+        row.setDeliveryNote(deliveryNote);
+        row.setRequiredArrivalDate(requiredArrivalDate);
+        return row;
     }
 }

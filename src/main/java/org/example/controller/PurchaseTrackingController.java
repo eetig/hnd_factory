@@ -7,6 +7,8 @@ import org.example.component.ImgUploader;
 import org.example.dto.PageResult;
 import org.example.dto.PurchaseTrackingQueryDTO;
 import org.example.dto.PurchaseTrackingSaveDTO;
+import org.example.dto.PurchaseTrackingSummaryQueryDTO;
+import org.example.dto.PurchaseTrackingSummaryVO;
 import org.example.dto.PurchaseTrackingVO;
 import org.example.dto.Result;
 import org.example.exception.BusinessException;
@@ -28,14 +30,15 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * 采购进度跟踪（需求登记 → 下单 → 到货）。
+ * 采购进度跟踪（需求登记 → 提 OA 单 → 到货）。
  *
- * <p>鉴权沿用既有约定：**查询类免登录**（与 /api/stock/list、/api/pick/list、
- * /api/inbound/list 一致 —— 这一页的数据是厂内公开的采购进度，不是敏感数据），
- * 写操作走 {@code @SaCheckPermission}（不变式 1：写接口必须带权限位）。
+ * <p>鉴权：**整组（含查询）限 admin**（变更-096 收紧）。原先按决策-003 是「查询免登录、
+ * 厂内公开」，但使用方 2026-10-17 明确「这页只有管理员能看」，于是与工单/领料/入库同一档 ——
+ * 由 {@code SaTokenConfigure.ADMIN_READ_PATTERNS} 里的 {@code /api/purchase/**} 兜住 GET。
+ * 写操作另外还有各自的不变式 1：{@code @SaCheckPermission} 权限位。
  *
- * <p>权限位用新造的 {@code purchase:edit}，而不是复用一个含义不符的旧位
- * （比如 work_order:import）—— 那一页将来要单独授权给采购/仓库岗时，
+ * <p>权限位用 {@code purchase:edit}，而不是复用一个含义不符的旧位
+ * （比如 work_order:import）—— 这一页将来要单独授权给采购/仓库岗时，
  * 复用会让「谁能改采购进度」说不清楚。新权限位要同时做两件事，
  * 否则会出现「接口有闸门、但没有任何角色拿得到钥匙」的哑火：
  * ① 在 {@code docs/schema.sql} 第 2 部分的角色种子与迁移步骤里各登记一次；
@@ -62,6 +65,18 @@ public class PurchaseTrackingController {
         IPage<PurchaseTrackingVO> page = purchaseTrackingService.listPage(query);
         return PageResult.of(page.getRecords(), page.getTotal(),
                 query.resolvedPageNum(), query.resolvedPageSize());
+    }
+
+    /**
+     * 顶部汇总栏：待提OA / 等货 / 临期 / 超期 / 已到货 / 部分到货（变更-096）。
+     *
+     * <p>**不分页**：它给的是全量计数，不是当前页的计数（ADR-0003：聚合由服务端按同一套筛选给）。
+     * 筛选参数与 {@code /list} 一致（keyword + 提出需求日期区间），但**不收 pageNum/pageSize** ——
+     * 收了会让人以为它分页。
+     */
+    @GetMapping("/summary")
+    public Result<PurchaseTrackingSummaryVO> summary(PurchaseTrackingSummaryQueryDTO query) {
+        return Result.success(purchaseTrackingService.summary(query));
     }
 
     /** 新增或修改（依 {@code id} 是否为空）。保存成功后会把物料编码登记进 material_stock */

@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.example.dto.PurchaseTrackingQueryDTO;
 import org.example.dto.PurchaseTrackingSaveDTO;
+import org.example.dto.PurchaseTrackingSummaryQueryDTO;
+import org.example.dto.PurchaseTrackingSummaryVO;
 import org.example.dto.PurchaseTrackingVO;
 import org.example.entity.MaterialStock;
 import org.example.entity.PurchaseTracking;
@@ -14,6 +16,7 @@ import org.example.feign.ImgFeignClient;
 import org.example.mapper.MaterialStockMapper;
 import org.example.mapper.PurchaseTrackingMapper;
 import org.example.service.PurchaseTrackingService;
+import org.example.util.PurchaseTrackingStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -23,6 +26,9 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 /**
  * 采购进度跟踪实现。
@@ -55,43 +61,148 @@ public class PurchaseTrackingServiceImpl
 
     @Override
     public IPage<PurchaseTrackingVO> listPage(PurchaseTrackingQueryDTO query) {
-        Page<PurchaseTracking> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
-        return baseMapper.selectPage(page, filterOf(query)
-                        // ⚠️ 排序键必须以**唯一列** id 收尾。同一天的采购需求可能有好几条，
-                        // 只按日期排时 MySQL 不保证两次查询的相对顺序一致 ⇒ 翻页会漏行、也会重复行。
-                        // 这个坑入库汇总改后端分页时踩过一次（见 ProductionInboundServiceImpl）。
-                        // 注意这里是 LambdaQueryWrapper，orderByDesc 要吃**方法引用**，
-                        // 不是 QueryWrapper 那种列名字符串（那处写法照抄会编译不过）。
-                        .orderByDesc(PurchaseTracking::getRequestDate)
-                        .orderByDesc(PurchaseTracking::getId))
-                .convert(this::toVO);
+        PurchaseTrackingStatus statusFilter = parseStatus(query.getStatus());
+        LambdaQueryWrapper<PurchaseTracking> wrapper = filterOf(query.getKeyword(),
+                query.parsedStartDate(), query.parsedEndDate(), query.getCategory());
+
+        // 没按状态筛：走正常的后端分页（快路径，绝大部分请求都在这条路上）
+        if (statusFilter == null) {
+            Page<PurchaseTracking> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
+            return baseMapper.selectPage(page, wrapper
+                            // ⚠️ 排序键必须以**唯一列** id 收尾。同一天的采购需求可能有好几条，
+                            // 只按日期排时 MySQL 不保证两次查询的相对顺序一致 ⇒ 翻页会漏行、也会重复行。
+                            // 这个坑入库汇总改后端分页时踩过一次（见 ProductionInboundServiceImpl）。
+                            // 注意这里是 LambdaQueryWrapper，orderByDesc 要吃**方法引用**，
+                            // 不是 QueryWrapper 那种列名字符串（那处写法照抄会编译不过）。
+                            .orderByDesc(PurchaseTracking::getRequestDate)
+                            .orderByDesc(PurchaseTracking::getId))
+                    .convert(this::toVO);
+        }
+
+        // 按派生状态筛：库里没有状态列，SQL 表达不了 —— 硬写 CASE WHEN 等于把
+        // 「到货优先、再提单、再看日期」那套规则抄第二遍，两处迟早对不上。
+        // 所以这里读筛选后的全量、用同一个 PurchaseTrackingStatus 过滤，再手工切页。
+        // 代价是 O(n)：这张表是流水账、百级的量（变更-096 时只有个位数行）。
+        // 真涨到几万行再优化 —— 那时要么把这套规则下沉成 SQL，要么物化一个 status 列。
+        LocalDate today = LocalDate.now();
+        List<PurchaseTracking> matched = new ArrayList<>();
+        for (PurchaseTracking row : baseMapper.selectList(wrapper
+                .orderByDesc(PurchaseTracking::getRequestDate)
+                .orderByDesc(PurchaseTracking::getId))) {
+            if (PurchaseTrackingStatus.of(row, today) == statusFilter) {
+                matched.add(row);
+            }
+        }
+
+        long pageNum = query.resolvedPageNum();
+        long pageSize = query.resolvedPageSize();
+        int from = (int) Math.min((pageNum - 1) * pageSize, matched.size());
+        int to = (int) Math.min(from + pageSize, matched.size());
+        Page<PurchaseTrackingVO> result = new Page<>(pageNum, pageSize, matched.size());
+        result.setRecords(matched.subList(from, to).stream().map(this::toVO).toList());
+        return result;
     }
 
-    /** 列表筛选：关键字（模糊，跨展示列）+ 提出需求日期区间 */
-    private LambdaQueryWrapper<PurchaseTracking> filterOf(PurchaseTrackingQueryDTO query) {
+    /**
+     * 解析状态筛选值；认不出来一律当「不限」。
+     *
+     * <p>与日期解析同口径（{@code DateRangeQueryDTO#parseDate}）：手工调接口传了脏值，
+     * 返回全部比报 400 更符合"筛选"的直觉 —— 前端下拉本来就只发这 6 个值。
+     */
+    private static PurchaseTrackingStatus parseStatus(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        try {
+            return PurchaseTrackingStatus.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            log.warn("采购列表收到未知的状态筛选值，按「不限」处理：{}", raw);
+            return null;
+        }
+    }
+
+    /**
+     * 汇总计数（变更-096）。
+     *
+     * <p><b>为什么在 Java 里数，而不是写一条 GROUP BY</b>：状态是派生的，
+     * 用 SQL 数就得把「到货优先、再提单、再看日期」那套判定顺序用 {@code CASE WHEN} 再抄一遍 ——
+     * 抄完两处规则各自演化，迟早对不上（列表说超期、汇总说等货）。
+     * 这里直接复用 {@link PurchaseTrackingStatus} 这一个口径，代价是把筛选后的行读进内存。
+     *
+     * <p>⚠️ 前提是这张表是**流水账、百级的量**（截至变更-096 只有个位数行）。
+     * 如果哪天涨到几万行，再把这段换成 SQL 聚合（届时务必让 SQL 与
+     * {@code PurchaseTrackingStatus} 共用同一份规则说明，别各写各的）。
+     */
+    @Override
+    public PurchaseTrackingSummaryVO summary(PurchaseTrackingSummaryQueryDTO query) {
+        List<PurchaseTracking> rows = baseMapper.selectList(
+                filterOf(query.getKeyword(), query.parsedStartDate(), query.parsedEndDate(), query.getCategory()));
+
+        LocalDate today = LocalDate.now();
+        PurchaseTrackingSummaryVO summary = new PurchaseTrackingSummaryVO();
+        summary.setTotal(rows.size());
+        for (PurchaseTracking row : rows) {
+            switch (PurchaseTrackingStatus.of(row, today)) {
+                case PENDING_OA:
+                    summary.setPendingOa(summary.getPendingOa() + 1);
+                    break;
+                case WAITING:
+                    summary.setWaiting(summary.getWaiting() + 1);
+                    break;
+                case DUE_SOON:
+                    summary.setDueSoon(summary.getDueSoon() + 1);
+                    break;
+                case OVERDUE:
+                    summary.setOverdue(summary.getOverdue() + 1);
+                    break;
+                case ARRIVED:
+                    summary.setArrived(summary.getArrived() + 1);
+                    break;
+                case PARTIAL:
+                    summary.setPartial(summary.getPartial() + 1);
+                    break;
+                default:
+                    // 枚举已穷举，这里只是让「将来加了状态却忘了更新汇总」能编译过而不是静默丢数
+                    break;
+            }
+        }
+        return summary;
+    }
+
+    /**
+     * 筛选条件：关键字（模糊，跨展示列）+ 提出需求日期区间。
+     *
+     * <p>列表与汇总**共用这一个方法**，保证两边的筛选口径永远一致 ——
+     * 各自写一份的话，最典型的后果是「顶栏说超期 3 条、列表筛出 5 条」。
+     */
+    private LambdaQueryWrapper<PurchaseTracking> filterOf(String keyword, LocalDate start, LocalDate end,
+                                                          String category) {
         LambdaQueryWrapper<PurchaseTracking> wrapper = new LambdaQueryWrapper<>();
 
-        String keyword = trimToNull(query.getKeyword());
-        if (keyword != null) {
+        String trimmedKeyword = trimToNull(keyword);
+        if (trimmedKeyword != null) {
             // 整组 OR 必须用 and(...) 包起来：否则第一个 or 会把前面的条件（日期区间）
             // 一起短路掉，变成「日期不限」—— 这类括号 bug 在 SQL 里不报错、只是结果不对。
-            wrapper.and(w -> w.like(PurchaseTracking::getRequester, keyword)
-                    .or().like(PurchaseTracking::getMaterialName, keyword)
-                    .or().like(PurchaseTracking::getMaterialCode, keyword)
-                    .or().like(PurchaseTracking::getSpec, keyword)
-                    .or().like(PurchaseTracking::getPurchaseOrderNo, keyword)
-                    .or().like(PurchaseTracking::getDeliveryNote, keyword));
+            wrapper.and(w -> w.like(PurchaseTracking::getRequester, trimmedKeyword)
+                    .or().like(PurchaseTracking::getMaterialName, trimmedKeyword)
+                    .or().like(PurchaseTracking::getMaterialCode, trimmedKeyword)
+                    .or().like(PurchaseTracking::getSpec, trimmedKeyword)
+                    .or().like(PurchaseTracking::getOaNo, trimmedKeyword)
+                    .or().like(PurchaseTracking::getDeliveryNote, trimmedKeyword));
         }
 
         // 日期区间作用在**提出需求日期**上 —— 页面的日期筛选框标的就是它。
         // 解析失败/为空一律当「不限」（见 DateRangeQueryDTO#parseDate 的注释）。
-        LocalDate start = query.parsedStartDate();
         if (start != null) {
             wrapper.ge(PurchaseTracking::getRequestDate, start);
         }
-        LocalDate end = query.parsedEndDate();
         if (end != null) {
             wrapper.le(PurchaseTracking::getRequestDate, end);
+        }
+        // 类别是**真列**，直接等值过滤（只有派生状态才需要绕道 Java）
+        String trimmedCategory = trimToNull(category);
+        if (trimmedCategory != null) {
+            wrapper.eq(PurchaseTracking::getCategory, trimmedCategory);
         }
         return wrapper;
     }
@@ -119,18 +230,40 @@ public class PurchaseTrackingServiceImpl
             throw new BusinessException("物料名称不能为空");
         }
 
+        // 变更-096 的两个数量校验：**只在填了的时候才校验**。
+        // 历史行没有数量（库里 NULL），如果这里无条件校验，老记录一改就保存不了。
+        if (dto.getQuantity() != null && dto.getQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("需求数量必须大于 0");
+        }
+        if (dto.getReceivedQuantity() != null
+                && dto.getReceivedQuantity().compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException("实际到货数量不能是负数");
+        }
+        if (dto.getQuantity() != null && dto.getReceivedQuantity() != null
+                && dto.getReceivedQuantity().compareTo(dto.getQuantity()) > 0) {
+            // 到货超过需求在现实中是可能的（供应商多送），但那是异常、要人确认，
+            // 不该被静默收下 —— 收下之后「部分到货」的判断也就失去意义了。
+            throw new BusinessException("实际到货数量不能大于需求数量（多送了请改需求数量或记在备注里）");
+        }
+
         PurchaseTracking row = new PurchaseTracking();
         row.setRequester(dto.getRequester().trim());
         row.setRequestDate(dto.getRequestDate());
         row.setMaterialName(dto.getMaterialName().trim());
-        // 库定义 NOT NULL DEFAULT '' 的两列：null 归一成空串（"还没下单/还没到货"就是空串）
+        // 库定义 NOT NULL DEFAULT '' 的两列：null 归一成空串（"还没提单/还没到货"就是空串）
         row.setMaterialCode(blankIfNull(dto.getMaterialCode()));
-        row.setPurchaseOrderNo(blankIfNull(dto.getPurchaseOrderNo()));
+        row.setOaNo(blankIfNull(dto.getOaNo()));
         row.setDeliveryNote(blankIfNull(dto.getDeliveryNote()));
-        // 可空的两列保持 null 语义（清空时真的写 NULL，靠实体的 ALWAYS 策略）
+        // 可空的几列保持 null 语义（清空时真的写 NULL，靠实体的 ALWAYS 策略）
         row.setSpec(trimToNull(dto.getSpec()));
         row.setRemark(trimToNull(dto.getRemark()));
         row.setRequiredArrivalDate(dto.getRequiredArrivalDate());
+        // 变更-096 新增的 5 列
+        row.setCategory(trimToNull(dto.getCategory()));
+        row.setQuantity(dto.getQuantity());
+        row.setUnit(trimToNull(dto.getUnit()));
+        row.setReceivedQuantity(dto.getReceivedQuantity());
+        row.setActualArrivalDate(dto.getActualArrivalDate());
 
         if (dto.getId() == null) {
             baseMapper.insert(row);
@@ -298,12 +431,27 @@ public class PurchaseTrackingServiceImpl
         vo.setMaterialName(row.getMaterialName());
         vo.setMaterialCode(row.getMaterialCode());
         vo.setSpec(row.getSpec());
+        vo.setCategory(row.getCategory());
+        vo.setQuantity(row.getQuantity());
+        vo.setUnit(row.getUnit());
         vo.setRequiredArrivalDate(row.getRequiredArrivalDate());
-        vo.setPurchaseOrderNo(row.getPurchaseOrderNo());
+        vo.setOaNo(row.getOaNo());
         vo.setDeliveryNote(row.getDeliveryNote());
+        vo.setReceivedQuantity(row.getReceivedQuantity());
+        vo.setActualArrivalDate(row.getActualArrivalDate());
         vo.setRemark(row.getRemark());
         vo.setCreateTime(row.getCreateTime());
         vo.setUpdateTime(row.getUpdateTime());
+
+        // 派生状态（变更-096）：口径只在 PurchaseTrackingStatus 一处，
+        // 汇总接口也调它，两处永远是同一天、同一套规则。
+        LocalDate today = LocalDate.now();
+        PurchaseTrackingStatus status = PurchaseTrackingStatus.of(row, today);
+        vo.setStatus(status.name());
+        vo.setStatusLabel(status.getLabel());
+        vo.setOverdueDays(PurchaseTrackingStatus.overdueDays(row, today));
+        vo.setDaysToDue(PurchaseTrackingStatus.daysToDue(row, today));
+        vo.setPartial(PurchaseTrackingStatus.isPartial(row));
         return vo;
     }
 

@@ -454,11 +454,22 @@ CREATE TABLE IF NOT EXISTS `equipment_ledger` (
 
 
 -- ---------------------------------------------------------------------------
--- 采购进度跟踪（变更-091）
+-- 采购进度跟踪（变更-091；变更-096 补字段）
 --
 -- 这一页记的是「谁、哪天提出要什么料、要求哪天到、下了哪张采购单、到的哪张送货单」，
--- 即**需求登记 → 下单 → 到货**一条线。物料名称与编码在这里是**快照文本**（不是外键）：
+-- 即**需求登记 → 提单 → 到货**一条线。物料名称与编码在这里是**快照文本**（不是外键）：
 -- 采购记录要能独立读懂，历史单据也不该被后来的主数据改名影响。
+--
+-- ⚠️ `purchase_order_no` 的语义（变更-096 使用方澄清）：存的是**OA 提单号**，
+--   不是采购下给供应商的订单号。作用是用它回查 OA 单、看那张单上的希望到货日期。
+--    为免重建索引，**没有改物理列名**，只改注释与代码里对它的称呼（oaNo）。
+--
+-- ⚠️ **不存「状态」列**（变更-096 的刻意设计）：状态由 OA 单号/送货单/日期**派生**，
+--   规则见 PurchaseTrackingVO：
+--     没 OA 单号            → 待提OA
+--     有单号、没送货单       → 等货（过 required_arrival_date 即「超期」，临近 3 天即「临期」）
+--     有送货单              → 已到货（received_quantity < quantity 为「部分到货」）
+--   存状态一定会和实际字段打架（例如状态写着「已到货」但送货单被删了），派生则永不脱节。
 --
 -- ⚠️ 物料编码**刻意不做唯一键**：
 --   ① 采购是流水账 —— 同一物料在不同需求批次里本来就会重复出现（这不算错误数据）；
@@ -481,9 +492,14 @@ CREATE TABLE IF NOT EXISTS `purchase_tracking` (
   `material_name`         varchar(128) NOT NULL DEFAULT '' COMMENT '物料名称（快照）',
   `material_code`         varchar(32)  NOT NULL DEFAULT '' COMMENT '物料编码（快照）',
   `spec`                  varchar(255) DEFAULT NULL COMMENT '规格型号',
-  `required_arrival_date` date         DEFAULT NULL COMMENT '要求到货日期',
-  `purchase_order_no`     varchar(64)  NOT NULL DEFAULT '' COMMENT '采购订单号（还没下单时留空）',
+  `category`              varchar(16)  DEFAULT NULL COMMENT '类别（备件/原料/设备/其他；变更-096 起；NULL = 未分类，页面显示「—」）',
+  `quantity`              decimal(12,3) DEFAULT NULL COMMENT '需求数量（变更-096 起；NULL = 历史数据未记，页面显示「—」）',
+  `unit`                  varchar(16)  DEFAULT NULL COMMENT '单位（个/台/套/件/米/公斤…；变更-096 起；NULL = 未填）',
+  `required_arrival_date` date         DEFAULT NULL COMMENT '要求到货日期（超期/临期的判定基准，源自 OA 单上的希望到货日期）',
+  `purchase_order_no`     varchar(64)  NOT NULL DEFAULT '' COMMENT 'OA 单号（变更-096 起语义明确：这是**OA 提单号**，不是采购下给供应商的订单号）；还没提单时留空',
   `delivery_note`         varchar(64)  NOT NULL DEFAULT '' COMMENT '送货单**图片路径**（/files/xxx，ADR-0004 固定拼接；变更-094 起是图片，不再填单号）；空串 = 还没到货；历史上存过文本单号，老数据按文本原样显示',
+  `received_quantity`     decimal(12,3) DEFAULT NULL COMMENT '实际到货数量（变更-096 起；NULL = 未记；< quantity 即部分到货）',
+  `actual_arrival_date`   date         DEFAULT NULL COMMENT '实际到货日期（变更-096 起；NULL = 还没到货；算出「提前/延后几天」靠它）',
   `remark`                varchar(255) DEFAULT NULL COMMENT '备注',
   `create_time`           datetime     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time`           datetime     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -491,7 +507,7 @@ CREATE TABLE IF NOT EXISTS `purchase_tracking` (
   KEY `idx_material_code` (`material_code`),
   KEY `idx_purchase_order_no` (`purchase_order_no`),
   KEY `idx_request_date` (`request_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采购进度跟踪（需求登记→下单→到货）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采购进度跟踪（需求登记→提OA单→到货）';
 
 
 -- =============================================================================
@@ -1465,3 +1481,60 @@ WHERE `container_type` IS NULL;
 --   COMMENT '送货单**图片路径**（/files/xxx，ADR-0004 固定拼接；变更-094 起是图片，不再填单号）；空串 = 还没到货；历史上存过文本单号，老数据按文本原样显示';
 -- --
 -- --     复核：SHOW FULL COLUMNS FROM purchase_tracking LIKE 'delivery_note';
+
+
+-- -- 20) 采购进度跟踪：补「类别/数量/单位/实际到货数量/实际到货日期」，并明确 OA 单号语义（变更-096，2026-10-17）
+-- --
+-- --     为什么补：使用方要「实时掌握进度、别误工期」，但原表既没有数量也没有实际到货日期，
+-- --     "部分到货""平均拖了几天"这类判断根本算不出来；类别则是之后查数据的第一个切面。
+-- --     五列**全部可空**：历史数据（当时 1 条）保持原样，页面显示「—」，不做任何回填。
+-- --
+-- --     ① 加列（MySQL 8 不支持 ADD COLUMN IF NOT EXISTS，先核对再执行；重复执行会报 Duplicate column）：
+-- ALTER TABLE `purchase_tracking`
+--   ADD COLUMN `category`            varchar(16)   DEFAULT NULL COMMENT '类别（备件/原料/设备/其他；变更-096 起；NULL = 未分类，页面显示「—」）' AFTER `spec`,
+--   ADD COLUMN `quantity`            decimal(12,3) DEFAULT NULL COMMENT '需求数量（变更-096 起；NULL = 历史数据未记，页面显示「—」）' AFTER `category`,
+--   ADD COLUMN `unit`                varchar(16)   DEFAULT NULL COMMENT '单位（个/台/套/件/米/公斤…；变更-096 起；NULL = 未填）' AFTER `quantity`,
+--   ADD COLUMN `received_quantity`   decimal(12,3) DEFAULT NULL COMMENT '实际到货数量（变更-096 起；NULL = 未记；< quantity 即部分到货）' AFTER `delivery_note`,
+--   ADD COLUMN `actual_arrival_date` date          DEFAULT NULL COMMENT '实际到货日期（变更-096 起；NULL = 还没到货；算出「提前/延后几天」靠它）' AFTER `received_quantity`;
+-- --
+-- --     改前核对（只读，记进变更-096 的验证记录）：
+-- SELECT COUNT(*) AS rows_before FROM `purchase_tracking`;
+-- SHOW FULL COLUMNS FROM `purchase_tracking`;
+-- --
+-- --     ② 语义同步：`purchase_order_no` 存的是 **OA 提单号**，不是采购订单号。
+-- --        **不改列名**（改列名要连 `idx_purchase_order_no` 一起重建，纯增风险），只改注释：
+-- ALTER TABLE `purchase_tracking`
+--   MODIFY COLUMN `purchase_order_no` varchar(64) NOT NULL DEFAULT ''
+--   COMMENT 'OA 单号（变更-096 起语义明确：这是**OA 提单号**，不是采购下给供应商的订单号）；还没提单时留空';
+-- --
+-- --     ③ 权限收紧（**这次改的是代码，不是表**，但一并记在这里免得漏）：
+-- --        第 18) 步当时写的是「查询接口 /api/purchase/list 免登录，所以不需要 view 权限位」。
+-- --        使用方确认「这页只有管理员能看」，所以 `SaTokenConfigure` 的 `ADMIN_READ_PATTERNS`
+-- --        增加 `/api/purchase/**`，**不新增权限位**（避免变更-091 记的那个坑：新权限位要同时
+-- --        播种 admin + 追加 schema 撤权清单，漏一个就出现"管理员反而没权限"）。
+-- --        复核：不登录访问 GET /api/purchase/list?pageNum=1&pageSize=10 → 期望 401，不是 200。
+-- --
+-- --     改后复核（只读）：
+-- SELECT COUNT(*) AS rows_after FROM `purchase_tracking`;   -- 期望与 rows_before 一致
+-- SHOW FULL COLUMNS FROM `purchase_tracking`
+--  WHERE Field IN ('category','quantity','unit','received_quantity','actual_arrival_date','purchase_order_no');
+-- --     期望：5 列存在且 Default 为 NULL；purchase_order_no 的注释以「OA 单号」开头。
+-- --     另：SELECT * FROM purchase_tracking LIMIT 1;  期望 5 个新列全为 NULL（历史行未被回填）。
+-- --
+-- --     回滚（无损，因为全是可空列、没有代码依赖旧值）：
+-- ALTER TABLE `purchase_tracking`
+--   DROP COLUMN `category`,
+--   DROP COLUMN `quantity`,
+--   DROP COLUMN `unit`,
+--   DROP COLUMN `received_quantity`,
+--   DROP COLUMN `actual_arrival_date`;
+-- --     ⚠️ 回滚前先备份这 5 列的数据（DECIMAL 列丢的是数量，重新录入代价高）：
+-- --     CREATE TABLE purchase_tracking_bak_096 AS SELECT id, category, quantity, unit,
+-- --            received_quantity, actual_arrival_date FROM purchase_tracking;
+-- --
+-- --     生产执行时间：**2026-10-17 17:10 已执行**（见变更-096 的部署记录）。
+-- --     执行前备份：/home/eetig/backup/purchase_tracking-20261017.sql（mysqldump，md5 f5e471a0a5d52040f0e5df3c1e1dfc93）
+-- --                  /home/eetig/backup/purchase_tracking-20261017-create.sql（SHOW CREATE TABLE 快照）
+-- --     执行后复核：17 列（原 12 + 新 5）；行数仍为 1；那一行的 5 个新列全为 NULL；
+-- --                 purchase_order_no 注释已变为「OA 单号…」。
+-- --     回滚锚点：镜像 hnd_factory:pre-096（=旧镜像 50c6b1e9），jar 备份 hnd_factory.jar.bak-20261017-171800。

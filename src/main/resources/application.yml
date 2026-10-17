@@ -70,3 +70,15 @@ sa-token:
   is-log: false            # 是否打印操作日志
   is-read-cookie: true     # 是否从 Cookie 读取 token
   is-read-header: true     # 是否从 Header 读取 token
+
+# 采购到货预警（变更-096）
+#
+# 每天 08:30 把「超期 / 临期」的采购需求推送到企业微信群机器人。
+# ⚠️ 真正的 webhook 地址**不要写在这个文件里**（它进仓库）：
+#   放到被 gitignore 的 config/application.yml，或者用环境变量 PURCHASE_ALERT_WEBHOOK 注入。
+# 默认 enabled=false —— 没配 webhook 就悄悄不推，而不是每次启动报错。
+purchase:
+  alert:
+    enabled: ${PURCHASE_ALERT_ENABLED:false}
+    # 企业微信「群机器人」Webhook 地址（群设置 → 群机器人 → 添加 → 复制 Webhook 地址）
+    webhook: ${PURCHASE_ALERT_WEBHOOK:}

@@ -21,7 +21,7 @@ public class SaTokenConfigure implements WebMvcConfigurer {
     private static final String[] WRITE_WHITELIST = {"/api/login", "/api/logout", "/error"};
 
     /**
-     * 「只给 admin 看」的台账明细路径（决策-004）：工单 / 领料 / 入库 / 货物移动。
+     * 「只给 admin 看」的台账明细路径（决策-004）：工单 / 领料 / 入库 / 货物移动 / 采购进度。
      *
      * <p>这几组是**明细**，收归 admin；周统计页需要的那两个汇总数走
      * {@code /api/stats/weekly}（不在本清单里，保持免登录），
@@ -31,9 +31,17 @@ public class SaTokenConfigure implements WebMvcConfigurer {
      * 而决策-003 的「新增只读接口一律免登录」是默认规则 —— 本清单是有意开出的例外。
      * 没在清单里的：/api/stock（物料查询）、/api/tank-level、/api/equipment（设备台账）、
      * /api/material（物料主数据检索，图片解析与文件导入也在用）。
+     *
+     * <p>⚠️ {@code /api/purchase/**} 是变更-096 加进来的。第 18) 步当时写的是
+     * 「采购进度是厂内公开数据，查询免登录」；使用方 2026-10-17 明确「这页只有管理员能看」，
+     * 于是改成与工单/领料同一档。**这里不新增权限位**（只用 admin 角色），
+     * 免得又踩变更-091 那个坑（新权限位要同时播种 admin + 追加 schema 撤权清单）。
+     * 将来要给车间主任/采购开"只看自己那部分"的看板时，**另开一个只读接口**，
+     * 不要把这里放开。
      */
     private static final String[] ADMIN_READ_PATTERNS = {
-            "/api/work-order/**", "/api/pick/**", "/api/inbound/**", "/api/goods-move/**"};
+            "/api/work-order/**", "/api/pick/**", "/api/inbound/**", "/api/goods-move/**",
+            "/api/purchase/**"};
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
