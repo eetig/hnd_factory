@@ -461,4 +461,86 @@ class PurchaseTrackingServiceImplTest {
         row.setRequiredArrivalDate(requiredArrivalDate);
         return row;
     }
+
+    /**
+     * 变更-118：状态筛选**多选**。
+     *
+     * <p>使用方的场景：「超期 + 临期一起看」是日常动作，单选得来回切两次。
+     *
+     * <p>这条断言守的是**并集**语义：多选不能取交集（交集永远是空集，
+     * 一条记录同时只能是一个派生状态），也不能只认第一个值（那等于多选没做）。
+     */
+    @Test
+    @DisplayName("状态多选 = 并集：超期 + 临期一起看")
+    void filtersByMultipleStatuses() {
+        LocalDate today = LocalDate.now();
+        PurchaseTracking overdue = statusRow("OA-1", "", today.minusDays(5));   // 超期
+        PurchaseTracking dueSoon = statusRow("OA-2", "", today.plusDays(2));    // 临期
+        PurchaseTracking waiting = statusRow("OA-3", "", today.plusDays(30));   // 等货（不在筛选里）
+        PurchaseTracking pending = statusRow("", "", today.plusDays(30));       // 待提单（不在筛选里）
+        when(baseMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(overdue, dueSoon, waiting, pending));
+
+        PurchaseTrackingQueryDTO query = new PurchaseTrackingQueryDTO();
+        query.setStatuses(List.of("OVERDUE", "DUE_SOON"));
+
+        var result = service.listPage(query);
+
+        assertEquals(2, result.getRecords().size(), "多选应返回并集（超期 1 + 临期 1）");
+        assertEquals(2, result.getTotal());
+        assertEquals("OVERDUE", result.getRecords().get(0).getStatus());
+        assertEquals("DUE_SOON", result.getRecords().get(1).getStatus());
+    }
+
+    /** 多选列表里混进脏值时逐条忽略，不能整批变「不限」（那会让用户以为筛选失效）。 */
+    @Test
+    @DisplayName("多选里有一个脏值：只忽略那一个，其余照筛")
+    void ignoresUnknownStatusAmongMultiple() {
+        LocalDate today = LocalDate.now();
+        PurchaseTracking overdue = statusRow("OA-1", "", today.minusDays(5));
+        PurchaseTracking waiting = statusRow("OA-2", "", today.plusDays(30));
+        when(baseMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(overdue, waiting));
+
+        PurchaseTrackingQueryDTO query = new PurchaseTrackingQueryDTO();
+        query.setStatuses(List.of("OVERDUE", "不存在的状态"));
+
+        var result = service.listPage(query);
+        assertEquals(1, result.getRecords().size());
+        assertEquals("OVERDUE", result.getRecords().get(0).getStatus());
+    }
+
+    /** 老前端只发单值 status 时必须照旧生效（兼容，不是废弃）。 */
+    @Test
+    @DisplayName("只发单值 status 的老前端仍然生效")
+    void singleStatusStillWorks() {
+        LocalDate today = LocalDate.now();
+        PurchaseTracking overdue = statusRow("OA-1", "", today.minusDays(5));
+        PurchaseTracking waiting = statusRow("OA-2", "", today.plusDays(30));
+        when(baseMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(overdue, waiting));
+
+        PurchaseTrackingQueryDTO query = new PurchaseTrackingQueryDTO();
+        query.setStatus("OVERDUE");
+
+        var result = service.listPage(query);
+        assertEquals(1, result.getRecords().size());
+        assertEquals("OVERDUE", result.getRecords().get(0).getStatus());
+    }
+
+    /** 前端发的是逗号串（`statuses=OVERDUE,DUE_SOON`），必须也能拆开。 */
+    @Test
+    @DisplayName("逗号串形态的 statuses 也认")
+    void commaSeparatedStatuses() {
+        LocalDate today = LocalDate.now();
+        PurchaseTracking overdue = statusRow("OA-1", "", today.minusDays(5));
+        PurchaseTracking dueSoon = statusRow("OA-2", "", today.plusDays(2));
+        PurchaseTracking waiting = statusRow("OA-3", "", today.plusDays(30));
+        when(baseMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(overdue, dueSoon, waiting));
+
+        PurchaseTrackingQueryDTO query = new PurchaseTrackingQueryDTO();
+        query.setStatuses(List.of("OVERDUE,DUE_SOON"));
+
+        var result = service.listPage(query);
+        assertEquals(2, result.getRecords().size(), "逗号串没拆开 —— 筛选会静默失效");
+    }
 }

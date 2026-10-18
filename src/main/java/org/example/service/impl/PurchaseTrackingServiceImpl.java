@@ -27,8 +27,10 @@ import lombok.extern.slf4j.Slf4j;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * 采购需求详情实现。
@@ -61,12 +63,13 @@ public class PurchaseTrackingServiceImpl
 
     @Override
     public IPage<PurchaseTrackingVO> listPage(PurchaseTrackingQueryDTO query) {
-        PurchaseTrackingStatus statusFilter = parseStatus(query.getStatus());
+        // 变更-118：多选优先，单值只做兼容（老前端还发 status）
+        Set<PurchaseTrackingStatus> statusFilters = parseStatuses(query.getStatuses(), query.getStatus());
         LambdaQueryWrapper<PurchaseTracking> wrapper = filterOf(query.getKeyword(),
                 query.parsedStartDate(), query.parsedEndDate(), query.getCategory());
 
         // 没按状态筛：走正常的后端分页（快路径，绝大部分请求都在这条路上）
-        if (statusFilter == null) {
+        if (statusFilters.isEmpty()) {
             Page<PurchaseTracking> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
             return baseMapper.selectPage(page, wrapper
                             // ⚠️ 排序键必须以**唯一列** id 收尾。同一天的采购需求可能有好几条，
@@ -84,12 +87,15 @@ public class PurchaseTrackingServiceImpl
         // 所以这里读筛选后的全量、用同一个 PurchaseTrackingStatus 过滤，再手工切页。
         // 代价是 O(n)：这张表是流水账、百级的量（变更-096 时只有个位数行）。
         // 真涨到几万行再优化 —— 那时要么把这套规则下沉成 SQL，要么物化一个 status 列。
+        //
+        // 变更-118 多选：只是把 `== statusFilter` 换成 `contains`，口径仍然只有
+        // PurchaseTrackingStatus 一处。多选不会让这里变慢 —— 无论如何都是全量扫一遍。
         LocalDate today = LocalDate.now();
         List<PurchaseTracking> matched = new ArrayList<>();
         for (PurchaseTracking row : baseMapper.selectList(wrapper
                 .orderByDesc(PurchaseTracking::getRequestDate)
                 .orderByDesc(PurchaseTracking::getId))) {
-            if (PurchaseTrackingStatus.of(row, today) == statusFilter) {
+            if (statusFilters.contains(PurchaseTrackingStatus.of(row, today))) {
                 matched.add(row);
             }
         }
@@ -119,6 +125,44 @@ public class PurchaseTrackingServiceImpl
             log.warn("采购列表收到未知的状态筛选值，按「不限」处理：{}", raw);
             return null;
         }
+    }
+
+    /**
+     * 解析状态筛选（变更-118 多选）。
+     *
+     * <p>返回值**空集 = 不限**，与单值时代 {@code null} 的语义一致。
+     * 多选列表非空时以它为准（老前端只发 {@code status} 时退化成一个元素的集合）。
+     *
+     * <p>「全部」这个 chip 在前端**不参与发请求**（它等于不筛），所以这里不需要
+     * 特殊处理"ALL"之类的哨兵值 —— 收到认不出的值就忽略，与单值口径相同。
+     */
+    private Set<PurchaseTrackingStatus> parseStatuses(List<String> rawList, String rawSingle) {
+        Set<PurchaseTrackingStatus> filters = new LinkedHashSet<>();
+        if (rawList != null) {
+            for (String raw : rawList) {
+                // 再按逗号拆一次：前端发的是 `?statuses=OVERDUE,DUE_SOON`，
+                // Spring 的 model attribute 在多数情况下会自动 split 成两个元素，
+                // 但**不是所有绑定路径都这么做**（取决于 target 类型与版本）。
+                // 这里自己再拆一层，两种形态都能认 —— 代价是一行 split，
+                // 收益是"筛选静默失效"这种最难查的故障不会发生。
+                if (!StringUtils.hasText(raw)) {
+                    continue;
+                }
+                for (String part : raw.split(",")) {
+                    PurchaseTrackingStatus parsed = parseStatus(part);
+                    if (parsed != null) {
+                        filters.add(parsed);
+                    }
+                }
+            }
+        }
+        if (filters.isEmpty()) {
+            PurchaseTrackingStatus single = parseStatus(rawSingle);
+            if (single != null) {
+                filters.add(single);
+            }
+        }
+        return filters;
     }
 
     /**

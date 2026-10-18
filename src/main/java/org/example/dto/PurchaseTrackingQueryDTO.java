@@ -31,6 +31,19 @@ public class PurchaseTrackingQueryDTO extends PageQueryDTO {
     /** 派生状态筛选（PENDING_OA / WAITING / DUE_SOON / OVERDUE / ARRIVED / PARTIAL），空白表示不限 */
     private String status;
 
+    /**
+     * 派生状态**多选**（变更-118）。
+     *
+     * <p>使用方的场景：「超期 + 临期一起看」是日常动作，单选得来回切两次。
+     * 绑定方式是重复的查询参数（{@code ?statuses=OVERDUE&statuses=DUE_SOON}），
+     * Spring 的 model attribute 绑定天然支持 {@code List<String>}。
+     *
+     * <p>与 {@link #status} 的关系：**非空时以它为准**，单值 {@code status} 只是兼容
+     * 老前端（不删，删了会让旧版本前端静默变成"不限"，那是最难查的那种故障）。
+     * 认不出来的值逐条忽略并打日志 —— 与单值那条的容错口径一致。
+     */
+    private java.util.List<String> statuses;
+
     /** 类别筛选（备件/五金 / 原料 / 设备 / 其他），空白表示不限 */
     private String category;
 }
