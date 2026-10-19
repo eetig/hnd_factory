@@ -534,7 +534,7 @@ CREATE TABLE IF NOT EXISTS `archive_document` (
   `id`          bigint       NOT NULL AUTO_INCREMENT,
   `name`        varchar(128) NOT NULL                COMMENT '资料名称（必填）',
   `category_id` bigint       NOT NULL                COMMENT '分类 id（必填）',
-  `file_name`   varchar(128) NOT NULL DEFAULT ''     COMMENT 'MinIO archive/ 下的对象名；空 = 只有纸质没有电子件',
+  `file_name`   varchar(128) NOT NULL DEFAULT ''     COMMENT '对象名（**裸名**，不含 archive/ 前缀：<32hex>.<ext>；前缀是 img-service 的实现细节）；空 = 只有纸质没有电子件',
   `orig_name`   varchar(255) NOT NULL DEFAULT ''     COMMENT '上传时的原文件名（下载时还原）',
   `file_size`   bigint       NOT NULL DEFAULT 0      COMMENT '字节数；0 = 无电子件',
   `mime_type`   varchar(128) NOT NULL DEFAULT ''     COMMENT '上传时声明的 Content-Type（供下载时回落）',
