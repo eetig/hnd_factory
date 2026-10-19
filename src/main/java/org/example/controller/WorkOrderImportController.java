@@ -797,7 +797,7 @@ public class WorkOrderImportController {
         };
     }
 
-    /** 上传单张内嵌图片到 img-service */
+    /** 上传单张内嵌图片到 file-service */
     private String uploadImage(WpsCellImageUtil.ExtractedImage img) {
         return imgUploader.upload(img);
     }

@@ -38,7 +38,7 @@ public class TankLevelImageServiceImpl extends ServiceImpl<TankLevelImageMapper,
      *
      * <p>ImgUploader 会把「非 png」一律按 jpg 提交，所以放 .gif / .bmp 进来不会被挡，
      * 而是以 jpg 的名义存进 MinIO —— 落库文件名看着正常、打开却不是那张图。
-     * 与前端 file input 的 accept 收窄理由相同（img-service 只认 jpg/png）。
+     * 与前端 file input 的 accept 收窄理由相同（file-service 只认 jpg/png）。
      */
     private static final Set<String> ALLOWED_IMAGE_EXT = Set.of("png", "jpg", "jpeg");
 
@@ -105,7 +105,7 @@ public class TankLevelImageServiceImpl extends ServiceImpl<TankLevelImageMapper,
                 log.warn("读取上传图据失败 recordId={}", recordId, e);
                 throw new BusinessException("图片读取失败，请重试。");
             } catch (RuntimeException e) {
-                log.warn("图据上传到 img-service 失败 recordId={}", recordId, e);
+                log.warn("图据上传到 file-service 失败 recordId={}", recordId, e);
                 throw new BusinessException("图据上传失败，请稍后重试。");
             }
 
@@ -154,7 +154,7 @@ public class TankLevelImageServiceImpl extends ServiceImpl<TankLevelImageMapper,
     }
 
     /**
-     * 删 img-service 上的文件。
+     * 删 file-service 上的文件。
      *
      * <p>失败只记日志、不往上抛：数据库那边已经清干净了，残留一个 MinIO 文件是次要问题，
      * 不该让「删图」这件事因为存储侧抖动而整个失败。
@@ -166,7 +166,7 @@ public class TankLevelImageServiceImpl extends ServiceImpl<TankLevelImageMapper,
         try {
             imgFeignClient.delete(fileName.trim());
         } catch (Exception e) {
-            log.warn("删除 img-service 图据失败，已忽略 fileName={}", fileName, e);
+            log.warn("删除 file-service 图据失败，已忽略 fileName={}", fileName, e);
         }
     }
 

@@ -2,7 +2,7 @@
 
 > 本文是本项目**实际在用**的部署说明，参数都是核对过的真实值。
 >
-> ⚠️ 仓库里另有一份 `DEPLOY.md`，那是 img-service 的通用模板（以 `xxx-service`、8080 端口举例），
+> ⚠️ 仓库里另有一份 `DEPLOY.md`，那是 file-service 的通用模板（以 `xxx-service`、8080 端口举例），
 > **不要照着它配本项目** —— 端口、依赖容器名、图片路由都不一样。以本文为准。
 
 ---
@@ -45,10 +45,10 @@
 |---|---|---|
 | Nacos | `1Panel-nacos-qquH-standalone:8848`（容器名） | 服务注册发现 |
 | MySQL | `1Panel-mysql-Ipel:3306` / 库 `factory_db` | 工单、领料、入库、货物移动、权限 |
-| img-service | Nacos 服务发现（宿主机 `127.0.0.1:8082`） | 图片上传/删除（Feign） |
+| file-service | Nacos 服务发现（宿主机 `127.0.0.1:8082`） | 图片上传/删除（Feign） |
 | excel-import-service | Nacos 服务发现（宿主机 `127.0.0.1:8083`） | Excel 解析（Feign，旧版导入接口用） |
 | Redis | **不使用** | Sa-Token 用默认内存存储 |
-| MinIO | **不直连** | 图片全走 img-service，MinIO 的 endpoint/AK/SK 配在那边 |
+| MinIO | **不直连** | 图片全走 file-service，MinIO 的 endpoint/AK/SK 配在那边 |
 
 > ⚠️ **依赖容器名要核对**：`1Panel-mysql-Ipel` 里是大写字母 **I**（不是小写 l）。这两个字符在等宽字体里几乎一样，
 > 我们已经因为看错踩过一次。上线前务必 `docker ps --format '{{.Names}}'` 复制，不要手敲。
@@ -108,7 +108,7 @@ services:
       # ---- Nacos ----
       # 容器名互访，不可写 127.0.0.1（那是容器自己）
       - "NACOS_SERVER_ADDR=1Panel-nacos-qquH-standalone:8848"
-      # 命名空间必须填 ID 而不是名称。本环境与 img-service / excel-import-service 一致：
+      # 命名空间必须填 ID 而不是名称。本环境与 file-service / excel-import-service 一致：
       # 都注册在 public（public 就是公共命名空间的 ID，不是"留空"的意思）
       - "NACOS_NAMESPACE=public"
       # true = Nacos 不可达时启动失败并一直重试，保证「服务在跑 = 一定注册上了」
@@ -247,7 +247,7 @@ location /api/xxx/ {
     proxy_send_timeout   60s;
 }
 
-# 单据图片由 img-service 提供 —— 注意端口是 8082，且**必须带路径重写**
+# 单据图片由 file-service 提供 —— 注意端口是 8082，且**必须带路径重写**
 location /files/  { proxy_pass http://127.0.0.1:8082/api/img/file/; }
 location /thumbs/ { proxy_pass http://127.0.0.1:8082/api/img/thumb/; }
 ```
@@ -257,17 +257,17 @@ location /thumbs/ { proxy_pass http://127.0.0.1:8082/api/img/thumb/; }
 | location | 应指向 | 提供的服务 |
 |---|---|---|
 | 业务接口 | `127.0.0.1:8084` | hnd_factory |
-| `/files/`、`/thumbs/` | `127.0.0.1:8082` | **img-service**（不是 8084！） |
+| `/files/`、`/thumbs/` | `127.0.0.1:8082` | **file-service**（不是 8084！） |
 | — | — | excel-import-service 走服务发现，**不需要 Nginx 路由** |
 
 ### 图片路由为什么必须带路径重写
 
 hnd_factory 返回给前端的图片地址是**相对路径** `/files/X`、`/thumbs/X`，
-而 img-service 的真实接口是 `/api/img/file/X`、`/api/img/thumb/X`（对应
+而 file-service 的真实接口是 `/api/img/file/X`、`/api/img/thumb/X`（对应
 `ImgController` 的 `@RequestMapping("/api/img")` + `@GetMapping("/file/{fileName}")`）。
 `proxy_pass` 带了路径时，nginx 会用 `/api/img/file/` **替换掉**匹配到的 `/files/` 前缀。
 
-> **漏了重写会怎样**：不会返回 404。img-service 的全局异常处理器把「路径不存在」也包成了
+> **漏了重写会怎样**：不会返回 404。file-service 的全局异常处理器把「路径不存在」也包成了
 > **HTTP 200 + 一段 JSON 错误**，所以表现是**状态码完全正常、响应体是 JSON 而不是图片、前端一片裂图**。
 > 比 404 更难查 —— 不看响应体根本发现不了。
 

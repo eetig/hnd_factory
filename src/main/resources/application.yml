@@ -55,7 +55,7 @@ mybatis-plus:
 
 # 图片对外基础路径（见《前后端改动统筹》变更-001）
 # 同源部署留空 → 前端拿到 /files/xxx、/thumbs/xxx 相对路径；
-# 非同源部署时填域名（如 https://img.example.com），由 Nginx 路由到 img-service。
+# 非同源部署时填域名（如 https://img.example.com），由 Nginx 路由到 file-service。
 image:
   base-url: ${IMAGE_BASE_URL:}
 

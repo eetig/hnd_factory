@@ -44,7 +44,7 @@ public class WorkOrderImageServiceImpl implements WorkOrderImageService {
 
         List<WorkOrderImageVO> result = new ArrayList<>();
         for (MultipartFile file : files) {
-            // 1. 上传到 MinIO（img-service）
+            // 1. 上传到 MinIO（file-service）
             ImgResult<UploadResult> up = imgFeignClient.upload(file);
             if (up == null || up.getCode() != 200 || up.getData() == null) {
                 throw new BusinessException("图片上传失败");

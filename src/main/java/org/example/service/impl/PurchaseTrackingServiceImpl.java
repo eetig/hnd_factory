@@ -57,7 +57,7 @@ public class PurchaseTrackingServiceImpl
     @Autowired
     private MaterialStockMapper materialStockMapper;
 
-    /** 送货单图片存在 img-service（MinIO）上，换图/删记录时要把旧文件删掉 */
+    /** 送货单图片存在 file-service（MinIO）上，换图/删记录时要把旧文件删掉 */
     @Autowired
     private ImgFeignClient imgFeignClient;
 
@@ -315,7 +315,7 @@ public class PurchaseTrackingServiceImpl
         if (dto.getId() == null) {
             baseMapper.insert(row);
         } else {
-            // 先读旧值：送货单可能是一张图片，换图/清空时得把 img-service 上的旧文件删掉。
+            // 先读旧值：送货单可能是一张图片，换图/清空时得把 file-service 上的旧文件删掉。
             // 成对操作 —— 只写不删会在 MinIO 里越堆越多，而且**没人会发现**
             //（code-review 技能里那条「改了成对操作的一侧，就去读另一侧」说的就是这个）。
             PurchaseTracking previous = baseMapper.selectById(dto.getId());
@@ -373,7 +373,7 @@ public class PurchaseTrackingServiceImpl
     }
 
     /**
-     * 删 img-service 上的那个文件。
+     * 删 file-service 上的那个文件。
      *
      * <p>失败只记日志、不往上抛：库那边已经改完了，残留一个 MinIO 文件是次要问题，
      * 不该让「换图 / 删记录」整个失败（同 TankLevelImageServiceImpl#deleteStoredFile 的分寸）。

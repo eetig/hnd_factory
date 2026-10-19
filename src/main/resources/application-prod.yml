@@ -67,8 +67,8 @@ spring:
 
 # ============================================================
 # 本项目不直连 MinIO / Redis：
-#   - 图片上传、预签名 URL、删除均通过 Feign 调用 img-service（@FeignClient name=img-service），
-#     MinIO 的 endpoint / AK / SK 配在 img-service 那边，不要在这里配。
+#   - 图片上传、预签名 URL、删除均通过 Feign 调用 file-service（@FeignClient name=file-service），
+#     MinIO 的 endpoint / AK / SK 配在 file-service 那边，不要在这里配。
 #   - Sa-Token 使用默认内存存储，没有引入 spring-boot-starter-data-redis。
 #   若后续确需引入，请补对应依赖后再取消下面的注释。
 # ============================================================

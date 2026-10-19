@@ -76,7 +76,7 @@ public class TankLevelController {
         return Result.success("保存成功", tankLevelRecordService.saveRecord(dto));
     }
 
-    /** 删除一条记录（连同它在 img-service 上的图据） */
+    /** 删除一条记录（连同它在 file-service 上的图据） */
     @SaCheckPermission("tank_level:delete")
     @DeleteMapping("/delete")
     public Result<Void> delete(@RequestParam("id") Long id) {
@@ -100,7 +100,7 @@ public class TankLevelController {
         return Result.success("上传成功", tankLevelImageService.uploadImages(recordId, list));
     }
 
-    /** 删除一张图据（连同 img-service 上的文件） */
+    /** 删除一张图据（连同 file-service 上的文件） */
     @SaCheckPermission("tank_level:edit")
     @DeleteMapping("/image/delete")
     public Result<Void> deleteImage(@RequestParam("imageId") Long imageId) {

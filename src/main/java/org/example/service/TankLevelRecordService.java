@@ -40,7 +40,7 @@ public interface TankLevelRecordService {
     TankLevelVO saveRecord(TankLevelSaveDTO dto);
 
     /**
-     * 删除一条记录，连同它名下的全部图据（数据库行 + img-service 上的文件）。
+     * 删除一条记录，连同它名下的全部图据（数据库行 + file-service 上的文件）。
      *
      * <p>子表没有外键，这一步必须显式做，否则留下孤儿行与 MinIO 孤儿文件。
      */

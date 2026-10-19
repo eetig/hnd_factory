@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `work_order` (
 
 
 -- ---------------------------------------------------------------------------
--- 工单物料图片（file_name 指向 MinIO 对象，访问 url 由 img-service 实时签名）
+-- 工单物料图片（file_name 指向 MinIO 对象，访问 url 由 file-service 实时签名）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `work_order_image` (
   `id`          bigint       NOT NULL AUTO_INCREMENT COMMENT '主键',
@@ -366,7 +366,7 @@ CREATE TABLE IF NOT EXISTS `tank_level_record` (
 CREATE TABLE IF NOT EXISTS `tank_level_image` (
   `id`          bigint       NOT NULL AUTO_INCREMENT COMMENT '主键',
   `record_id`   bigint       NOT NULL COMMENT '所属液位记录 id（tank_level_record.id）',
-  `file_name`   varchar(255) NOT NULL COMMENT 'MinIO 文件名（经 img-service 访问）',
+  `file_name`   varchar(255) NOT NULL COMMENT 'MinIO 文件名（经 file-service 访问）',
   `create_time` datetime     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   PRIMARY KEY (`id`),
   KEY `idx_record_id` (`record_id`)
@@ -534,7 +534,7 @@ CREATE TABLE IF NOT EXISTS `archive_document` (
   `id`          bigint       NOT NULL AUTO_INCREMENT,
   `name`        varchar(128) NOT NULL                COMMENT '资料名称（必填）',
   `category_id` bigint       NOT NULL                COMMENT '分类 id（必填）',
-  `file_name`   varchar(128) NOT NULL DEFAULT ''     COMMENT '对象名（**裸名**，不含 archive/ 前缀：<32hex>.<ext>；前缀是 img-service 的实现细节）；空 = 只有纸质没有电子件',
+  `file_name`   varchar(128) NOT NULL DEFAULT ''     COMMENT '对象名（**裸名**，不含 archive/ 前缀：<32hex>.<ext>；前缀是 file-service 的实现细节）；空 = 只有纸质没有电子件',
   `orig_name`   varchar(255) NOT NULL DEFAULT ''     COMMENT '上传时的原文件名（下载时还原）',
   `file_size`   bigint       NOT NULL DEFAULT 0      COMMENT '字节数；0 = 无电子件',
   `mime_type`   varchar(128) NOT NULL DEFAULT ''     COMMENT '上传时声明的 Content-Type（供下载时回落）',
@@ -1334,7 +1334,7 @@ WHERE `container_type` IS NULL;
 -- -- 10) 月底车间各储罐液位记录表（变更-004）
 -- CREATE TABLE IF NOT EXISTS `tank_level_record` ( ... );   -- 见第 1 部分
 --
--- -- 示例：补录一条月底液位记录（图据填 img-service 的文件名，没拍照就留空）
+-- -- 示例：补录一条月底液位记录（图据填 file-service 的文件名，没拍照就留空）
 -- INSERT INTO `tank_level_record`
 --   (`record_date`, `location`, `category`, `material_code`, `material_name`,
 --    `tank_name`, `tank_code`, `level_value`, `theoretical_weight`, `file_name`)

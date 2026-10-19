@@ -12,8 +12,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
 
-// name = img-service 和图片服务 spring.application.name 保持一致
-@FeignClient(name = "img-service")
+// name = file-service 和文件服务 spring.application.name 保持一致（2026-10-20 由 file-service 更名：它现在同时管图片与文档）
+@FeignClient(name = "file-service")
 public interface ImgFeignClient {
     // 根据 fileName 生成 MinIO 预签名访问 URL
     @GetMapping("/api/img/getPreviewUrl")
@@ -28,7 +28,7 @@ public interface ImgFeignClient {
     ImgResult<UploadResult> upload(@RequestPart("file") MultipartFile file);
 
     /**
-     * 上传容器底图：img-service 会**一张进、两张出**（白纸版 + 亮线版，深浅两个主题各一版）。
+     * 上传容器底图：file-service 会**一张进、两张出**（白纸版 + 亮线版，深浅两个主题各一版）。
      *
      * <p>与上面的 {@code /upload} 分开：那个回一个 URL 供单据图片直接显示，
      * 这个回两个文件名、且文件名要满足前端的 {@code -dark} 后缀约定，产物形状根本不同。

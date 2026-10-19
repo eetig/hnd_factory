@@ -27,7 +27,7 @@ public interface TankLevelImageService {
      */
     List<TankLevelImageVO> uploadImages(Long recordId, List<MultipartFile> files);
 
-    /** 删除一张图：连同它在 img-service 上的文件 */
+    /** 删除一张图：连同它在 file-service 上的文件 */
     void deleteImage(Long imageId);
 
     /**

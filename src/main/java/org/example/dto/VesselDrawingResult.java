@@ -1,9 +1,9 @@
 package org.example.dto;
 
 /**
- * 容器底图上传结果（img-service 返回的镜像）：**一张进、两张出**。
+ * 容器底图上传结果（file-service 返回的镜像）：**一张进、两张出**。
  *
- * <p>与 img-service 的 {@code org.example.dto.VesselDrawingResult} 字段一一对应 ——
+ * <p>与 file-service 的 {@code org.example.dto.VesselDrawingResult} 字段一一对应 ——
  * 两仓各一份，改一处要改两处。
  *
  * <p>前端拿到 {@code fileName} 后拼成 {@code /files/{fileName}} 存进

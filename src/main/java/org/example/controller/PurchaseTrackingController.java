@@ -93,10 +93,10 @@ public class PurchaseTrackingController {
         return Result.success(null);
     }
 
-    /** 送货单图片的后缀白名单。img-service 只收 jpg/png，这里先拦一道给出人能看懂的话 */
+    /** 送货单图片的后缀白名单。file-service 只收 jpg/png，这里先拦一道给出人能看懂的话 */
     private static final Set<String> ALLOWED_IMAGE_EXT = Set.of("jpg", "jpeg", "png");
 
-    /** img-service 自己限 10MB；在这边先拦，免得使用者等半天换来一句存储侧报错 */
+    /** file-service 自己限 10MB；在这边先拦，免得使用者等半天换来一句存储侧报错 */
     private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
 
     /**
@@ -105,7 +105,7 @@ public class PurchaseTrackingController {
      * <p>走 {@link ImgUploader} 的「单据图片」那条通路（一张进、回一个 fileName），
      * **不是**底图那条一张进两张出的通路 —— 送货单只用于显示，不需要白纸版/亮线版。
      *
-     * <p>上传一律打到本服务再转发：img-service 不对外暴露，而且它那边**没有鉴权注解**，
+     * <p>上传一律打到本服务再转发：file-service 不对外暴露，而且它那边**没有鉴权注解**，
      * 权限只能关在这一层（同 {@code EquipmentLedgerController#ledgerUploadImage} 的理由）。
      *
      * <p>返回的 fileName 由前端按 ADR-0004 固定拼接成 {@code /files/xxx} 存进

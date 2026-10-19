@@ -10,7 +10,7 @@ import java.nio.file.Files;
 
 /**
  * 内存版 MultipartFile：把 Excel 内嵌图片的字节包装成 MultipartFile，
- * 供 Feign 调 img-service 上传（项目里 MockMultipartFile 只在 test 依赖中）。
+ * 供 Feign 调 file-service 上传（项目里 MockMultipartFile 只在 test 依赖中）。
  */
 public class InMemoryMultipartFile implements MultipartFile {
 

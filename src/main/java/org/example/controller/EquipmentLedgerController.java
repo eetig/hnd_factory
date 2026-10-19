@@ -45,7 +45,7 @@ public class EquipmentLedgerController {
     @Autowired
     private EquipmentLedgerService equipmentLedgerService;
 
-    /** 底图上传要转发给 img-service（前端不直连那个服务），复用既有的上传组件 */
+    /** 底图上传要转发给 file-service（前端不直连那个服务），复用既有的上传组件 */
     @Autowired
     private ImgUploader imgUploader;
 
@@ -136,8 +136,8 @@ public class EquipmentLedgerController {
     /**
      * 上传容器底图：**一张进、两张出**（白纸版 + 亮线版）。
      *
-     * <p>前端不直连 img-service（那个服务不对外暴露，上传一直是打到本服务再转发的），
-     * 所以这里做一层转发 —— 顺便把权限也关在这一层：img-service 那边没有鉴权注解，
+     * <p>前端不直连 file-service（那个服务不对外暴露，上传一直是打到本服务再转发的），
+     * 所以这里做一层转发 —— 顺便把权限也关在这一层：file-service 那边没有鉴权注解，
      * 光靠它自己是拦不住的。
      *
      * <p>返回的 {@code fileName} 由前端拼成 {@code /files/xxx} 存进 {@code image_file}；

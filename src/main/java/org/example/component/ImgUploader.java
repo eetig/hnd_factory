@@ -14,7 +14,7 @@ import org.springframework.web.multipart.MultipartFile;
 /**
  * 单据图片上传 —— 抽出来给「Excel 导入」与「图片识别确认」共用。
  *
- * <p>两处都要把单据图片传到 img-service 并拿回 fileName，规则一致（后缀白名单、文件名清洗、
+ * <p>两处都要把单据图片传到 file-service 并拿回 fileName，规则一致（后缀白名单、文件名清洗、
  * 失败即抛），各写一份迟早会出现一处能传一处传不了。
  */
 @Component
@@ -27,7 +27,7 @@ public class ImgUploader {
      * 上传 xlsx 内嵌单据图。
      *
      * @param img 从 xlsx 里提取出的图片
-     * @return img-service 返回的 fileName（存进记录的 file_name 列）
+     * @return file-service 返回的 fileName（存进记录的 file_name 列）
      */
     public String upload(WpsCellImageUtil.ExtractedImage img) {
         return upload(img.getData(), img.getOriginalName(), img.getExtension());
@@ -39,10 +39,10 @@ public class ImgUploader {
      * @param data         图片字节
      * @param originalName 原始文件名，仅用于生成可读的名字；可为空
      * @param extension    扩展名，非 png 一律按 jpg 提交
-     * @return img-service 返回的 fileName
+     * @return file-service 返回的 fileName
      */
     public String upload(byte[] data, String originalName, String extension) {
-        // img-service 只接受 jpg/png，jpeg 统一按 jpg 提交（格式相同）
+        // file-service 只接受 jpg/png，jpeg 统一按 jpg 提交（格式相同）
         String ext = "png".equalsIgnoreCase(extension) ? "png" : "jpg";
         String contentType = "png".equals(ext) ? "image/png" : "image/jpeg";
 
@@ -53,7 +53,7 @@ public class ImgUploader {
         MultipartFile file = new InMemoryMultipartFile("file", base + "." + ext, contentType, data);
         ImgResult<UploadResult> res = imgFeignClient.upload(file);
         if (res == null || res.getCode() != 200 || res.getData() == null) {
-            throw new IllegalStateException("img-service 返回异常");
+            throw new IllegalStateException("file-service 返回异常");
         }
         return res.getData().getFileName();
     }
@@ -62,7 +62,7 @@ public class ImgUploader {
      * 上传容器底图（「设备数据维护」页，2026-10-06）：**一张进、两张出**。
      *
      * <p>与上面两个方法分开：它们回一个 fileName 就够（单据图片只用于显示），
-     * 底图要回一对（白纸版 + 亮线版，深浅两个主题各要一版），且 img-service 侧会先做
+     * 底图要回一对（白纸版 + 亮线版，深浅两个主题各要一版），且 file-service 侧会先做
      * 图像处理（合成白底、算墨量出亮线版）。
      *
      * @return 两个文件名，调用方把 {@code fileName} 拼成 {@code /files/xxx} 存进 image_file
@@ -70,7 +70,7 @@ public class ImgUploader {
     public VesselDrawingResult uploadVesselDrawing(MultipartFile file) {
         ImgResult<VesselDrawingResult> res = imgFeignClient.vesselUpload(file);
         if (res == null || res.getCode() != 200 || res.getData() == null) {
-            throw new IllegalStateException("img-service 返回异常");
+            throw new IllegalStateException("file-service 返回异常");
         }
         return res.getData();
     }
