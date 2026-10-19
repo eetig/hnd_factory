@@ -512,6 +512,48 @@ CREATE TABLE IF NOT EXISTS `purchase_tracking` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采购进度跟踪（需求登记→提OA单→到货）';
 
 
+-- ---------------------------------------------------------------------------
+-- 资料归档（变更-126，2026-10-20）
+--
+-- 两张表：分类（两级、使用方维护）+ 台账。设计理由见 docs/资料归档-开工方案.md。
+-- 约定与全库一致：可选字符串一律 NOT NULL DEFAULT ''；分页 ORDER BY 末尾带唯一 id；
+-- 不建业务唯一键（同一份资料可能有多册/多年）；删除用 deleted 软删、文件不物理删。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `archive_category` (
+  `id`         bigint      NOT NULL AUTO_INCREMENT,
+  `parent_id`  bigint      DEFAULT NULL COMMENT '为空 = 大类；否则指向大类 id（只支持两级）',
+  `name`       varchar(64) NOT NULL                COMMENT '类目名（同一父下不许重名）',
+  `sort_no`    int         NOT NULL DEFAULT 0      COMMENT '同层排序，小的在前',
+  `create_time` datetime   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_parent` (`parent_id`),
+  UNIQUE KEY `uk_parent_name` (`parent_id`, `name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='资料分类（两级，使用方维护）';
+
+CREATE TABLE IF NOT EXISTS `archive_document` (
+  `id`          bigint       NOT NULL AUTO_INCREMENT,
+  `name`        varchar(128) NOT NULL                COMMENT '资料名称（必填）',
+  `category_id` bigint       NOT NULL                COMMENT '分类 id（必填）',
+  `file_name`   varchar(128) NOT NULL DEFAULT ''     COMMENT 'MinIO archive/ 下的对象名；空 = 只有纸质没有电子件',
+  `orig_name`   varchar(255) NOT NULL DEFAULT ''     COMMENT '上传时的原文件名（下载时还原）',
+  `file_size`   bigint       NOT NULL DEFAULT 0      COMMENT '字节数；0 = 无电子件',
+  `mime_type`   varchar(128) NOT NULL DEFAULT ''     COMMENT '上传时声明的 Content-Type（供下载时回落）',
+  `expire_date` date         DEFAULT NULL            COMMENT '有效期至（证照/校验/培训类）；NULL = 无有效期',
+  `origin_place` varchar(128) NOT NULL DEFAULT ''    COMMENT '纸质原件在哪：部门/柜子/责任人',
+  `doc_no`      varchar(64)  NOT NULL DEFAULT ''     COMMENT '编号/文号',
+  `owner`       varchar(64)  NOT NULL DEFAULT ''     COMMENT '责任人',
+  `remark`      varchar(500) NOT NULL DEFAULT '',
+  `deleted`     tinyint      NOT NULL DEFAULT 0      COMMENT '软删：1 = 已删（只有 admin 能删）；文件保留',
+  `created_by`  varchar(64)  NOT NULL DEFAULT ''     COMMENT '录入人用户名',
+  `create_time` datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_category` (`category_id`),
+  KEY `idx_expire` (`expire_date`),
+  KEY `idx_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='资料台账（检查找得到 + 到期能提醒）';
+
+
 -- =============================================================================
 -- 第 2 部分：初始化数据（幂等，可重复执行）
 -- =============================================================================
@@ -580,6 +622,10 @@ JOIN (
   -- 查询（/api/purchase/list）与其它列表接口一样免登录 —— 采购进度是厂内公开信息；
   -- 只有「登记/改/删」需要这一位。
   SELECT 'admin', 'purchase:edit'                 UNION ALL
+  -- 资料归档（2026-10-20，变更-126）：同样单独一个权限位、只授 admin。
+  -- ⚠️ 这一位只管「增/改/删」——查看是**全员可看**（Q5 的决策），所以没有 archive:view；
+  --    登录由全局闸门保证，非 admin 也能进页面、能下载。
+  SELECT 'admin', 'archive:edit'                  UNION ALL
   -- team_leader：仅查看（写权限一律只授 admin，见下方撤权段）
   SELECT 'team_leader', 'work_order:view'         UNION ALL
   SELECT 'team_leader', 'goods_move:view'         UNION ALL
@@ -627,7 +673,9 @@ WHERE r.`role_key` <> 'admin'
     'tank_level:delete',
     -- ⚠️ 新增写权限位时**必须**追加到这里（本清单要求与 @SaCheckPermission 一一对应）：
     -- 漏了它，被误授给非 admin 的新权限位就不会被这段撤掉，「写权限一律只授 admin」出现缺口。
-    'purchase:edit'
+    'purchase:edit',
+    -- 资料归档（2026-10-20，变更-126）：同一条规矩，新增写权限位必须同时加进这份撤权清单。
+    'archive:edit'
   );
 
 
@@ -1591,3 +1639,46 @@ WHERE `container_type` IS NULL;
 -- --
 -- --     回滚（无损）：
 -- ALTER TABLE `purchase_tracking` DROP COLUMN `oa_url`;
+
+-- ---------------------------------------------------------------------------
+-- 23) 资料归档：两张表 + archive:edit 权限位（变更-126，2026-10-20）
+--
+--     使用方原话：「我们是一家化工厂，目前的痛点是资料没人归纳整理，也就是没有资料员…
+--     想在 hnd-factory 添加一个资料归档的功能」。方案见 docs/资料归档-开工方案.md（已定 6 条）。
+--
+--     为什么是两张表：
+--       · archive_category —— 分类。**资料员的第一件事就是分类**；两级、类目存库由使用方维护
+--         （各厂类目差异极大，写死在代码里必错）。
+--       · archive_document —— 台账。必填只有「名称/分类/文件（或纸质）」，其余选填
+--         （必填一多就没人录，变更-085 那次 92 行空值就是教训）。
+--
+--     ⚠️ 本步**完全幂等**：建表用 CREATE TABLE IF NOT EXISTS；权限是 INSERT ... WHERE NOT EXISTS
+--        + 撤权 DELETE，都可重复执行 —— 与第 18) 步的写法一致。
+--
+--     执行顺序：本步只动库，不动代码（表先建好，代码后上，回滚更容易）。
+--
+--     改前核对（只读）：
+--       SELECT COUNT(*) FROM information_schema.TABLES
+--        WHERE TABLE_SCHEMA='factory_db' AND TABLE_NAME IN ('archive_category','archive_document');  -- 期望 0
+--
+--     （表结构见文件第 1 部分末尾的两条 CREATE TABLE；这里只记执行与复核。）
+--
+--     改后复核（只读）：
+--       SHOW CREATE TABLE `archive_category`;    -- 期望：uk_parent_name (parent_id, name)
+--       SHOW CREATE TABLE `archive_document`;    -- 期望：idx_category / idx_expire / idx_name 三个索引
+--       SELECT `permission_key` FROM `sys_role_permission` p
+--         JOIN `sys_role` r ON r.id = p.role_id
+--        WHERE r.role_key='admin' AND p.permission_key='archive:edit';   -- 期望 1 行
+--       SELECT COUNT(*) FROM `sys_role_permission` p
+--         JOIN `sys_role` r ON r.id = p.role_id
+--        WHERE r.role_key <> 'admin' AND p.permission_key='archive:edit'; -- 期望 0 行（写权限只授 admin）
+--
+--     回滚（无损：新表、没有代码依赖）：
+--       DROP TABLE IF EXISTS `archive_document`;
+--       DROP TABLE IF EXISTS `archive_category`;
+--       DELETE p FROM `sys_role_permission` p
+--         JOIN `sys_role` r ON r.id = p.role_id
+--        WHERE p.permission_key = 'archive:edit';
+--     ⚠️ 一旦开始用（有真实资料上传），回滚前必须先把 MinIO 里的 archive/ 对象和两张表一起备份。
+--
+--     生产执行：**尚未执行**（等后端与前端一起上；执行后在此补时间与备份 md5）。
