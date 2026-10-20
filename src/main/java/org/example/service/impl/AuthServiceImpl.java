@@ -111,8 +111,15 @@ public class AuthServiceImpl implements AuthService {
         SysUser user = new SysUser();
         user.setUsername(username);
         user.setPassword(BCrypt.hashpw(dto.getPassword()));
+        /*
+         * 昵称留空就存 NULL —— **不要**拿账号名兜底。
+         *
+         * 使用方 2026-10-20：「没有昵称默认是账号」。如果这里用账号名填进 real_name，
+         * 前端就分不清"用户真的叫这个"还是"他没填"，『没填时显示账号』这条就实现不了。
+         * 前端 getDisplayName() 的回落顺序是 昵称 → 账号 → 角色名，空值会自然落到账号上。
+         */
         user.setRealName(dto.getRealName() == null || dto.getRealName().isBlank()
-                ? username : dto.getRealName().trim());
+                ? null : dto.getRealName().trim());
         user.setRoleId(member.getId());
         user.setStatus(1);
         sysUserMapper.insert(user);
