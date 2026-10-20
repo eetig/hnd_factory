@@ -187,6 +187,12 @@ public class ArchiveController {
 
     private static String currentUsername() {
         try {
+            // 优先会话里的 username（登录时写入）；没有则退回 loginId。
+            // 不能只用 getLoginIdAsString() —— 那是**用户 id**，created_by 会存成 "1"。
+            Object name = StpUtil.getSession().get("username");
+            if (name != null && !String.valueOf(name).isBlank()) {
+                return String.valueOf(name);
+            }
             return StpUtil.getLoginIdAsString();
         } catch (Exception e) {
             // 全局闸门保证到这里一定已登录；真取不到也不该让保存失败，留空即可

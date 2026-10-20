@@ -32,6 +32,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -414,20 +415,33 @@ class PurchaseTrackingServiceImplTest {
         assertEquals("OVERDUE", PurchaseTrackingStatus.of(overdue, today).name());
         assertEquals(5, PurchaseTrackingStatus.overdueDays(overdue, today));
 
-        // 有送货单 → 已到货（到货之后即使晚了很多天也不该继续算超期）
+        // 填了实际到货日期 → 已到货（到货之后即使晚了很多天也不该继续算超期）
         PurchaseTracking arrived = statusRow("OA-5", "/files/a.png", today.minusDays(30));
+        arrived.setActualArrivalDate(today.minusDays(2));
         assertEquals("ARRIVED", PurchaseTrackingStatus.of(arrived, today).name());
         assertNull(PurchaseTrackingStatus.overdueDays(arrived, today));
 
         // 到货数量 < 需求数量 → 部分到货
         PurchaseTracking partial = statusRow("OA-6", "/files/b.png", today.minusDays(30));
+        partial.setActualArrivalDate(today.minusDays(1));
         partial.setQuantity(new BigDecimal("3"));
         partial.setReceivedQuantity(new BigDecimal("2"));
         assertEquals("PARTIAL", PurchaseTrackingStatus.of(partial, today).name());
 
         // 数量缺失时判不出缺口 → 按已到货处理（历史数据没有数量列，不能凭空猜）
         PurchaseTracking noQty = statusRow("OA-7", "/files/c.png", today);
+        noQty.setActualArrivalDate(today);
         assertEquals("ARRIVED", PurchaseTrackingStatus.of(noQty, today).name());
+
+        /*
+         * 2026-10-20 回归：只有送货单图片、**没填到货日期** ⇒ 不算已到货。
+         * 使用方报的就是这个 —— 列表显示「已到货」，可实际到货日期和数量都是空的。
+         */
+        PurchaseTracking imageOnly = statusRow("OA-8", "/files/only-image.png", today.minusDays(30));
+        assertNotEquals("ARRIVED", PurchaseTrackingStatus.of(imageOnly, today).name());
+        assertNotEquals("PARTIAL", PurchaseTrackingStatus.of(imageOnly, today).name());
+        // 有单号 + 早过期 + 没到货日期 ⇒ 应该是超期
+        assertEquals("OVERDUE", PurchaseTrackingStatus.of(imageOnly, today).name());
     }
 
     @Test
@@ -437,6 +451,7 @@ class PurchaseTrackingServiceImplTest {
         PurchaseTracking overdue = statusRow("OA-1", "", today.minusDays(2));
         PurchaseTracking dueSoon = statusRow("OA-2", "", today.plusDays(1));
         PurchaseTracking arrived = statusRow("OA-3", "/files/a.png", today);
+        arrived.setActualArrivalDate(today);
         PurchaseTracking pendingOa = statusRow("", "", null);
         when(baseMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(overdue, dueSoon, arrived, pendingOa));

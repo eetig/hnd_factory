@@ -16,7 +16,7 @@ import java.time.temporal.ChronoUnit;
  *
  * <p><b>判定顺序（先到货，再提单，最后看时间）</b>，越靠前优先级越高：
  * <ol>
- *   <li>有送货单图片 → {@link #ARRIVED}（若填了到货数量且小于需求数量 → {@link #PARTIAL}）
+ *   <li>填了实际到货日期 → {@link #ARRIVED}（若填了到货数量且小于需求数量 → {@link #PARTIAL}）
  *       —— 到货了就是到货了，哪怕晚了很多天，也不该继续显示「超期」；</li>
  *   <li>没有 OA 单号 → {@link #PENDING_OA} —— 需求登记了但还没提单，无从催；</li>
  *   <li>没有要求到货日期 → {@link #WAITING} —— 没有基准就算不出超期/临期；</li>
@@ -88,7 +88,15 @@ public enum PurchaseTrackingStatus {
         }
         LocalDate day = today == null ? LocalDate.now() : today;
 
-        if (hasText(row.getDeliveryNote())) {
+        /*
+         * 已到货的判据是**实际到货日期**，不是送货单图片（2026-10-20 使用方报的 bug）。
+         *
+         * 原来写的是「有送货单 ⇒ 已到货」：结果一条只有送货单图、到货日期与数量全空的记录
+         * 在列表和抽屉里都显示「已到货」—— 使用方原话「明明还没到货，怎么显示已到货了」。
+         * 一张图不是事实：可能提前拍、可能拍错、可能只是先把图存着；「哪天到的」才是事实。
+         * 所以图片降为**凭据**（抽屉里照样能看到），状态只认 actual_arrival_date。
+         */
+        if (row.getActualArrivalDate() != null) {
             return isPartial(row) ? PARTIAL : ARRIVED;
         }
         if (!hasText(row.getOaNo())) {

@@ -48,6 +48,9 @@ public class AuthServiceImpl implements AuthService {
 
         // 2. 登录
         StpUtil.login(user.getId());
+        // 会话里记一份用户名：归档等地方要把"录入人"写成 username，
+        // 而 getLoginIdAsString() 拿到的是**用户 id**（2026-10-20 修的，原先 created_by 存成 "1"）。
+        StpUtil.getSession().set("username", user.getUsername());
 
         // 3. 组装返回
         SysRole role = loadRole(user);
