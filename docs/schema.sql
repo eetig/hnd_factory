@@ -1758,3 +1758,57 @@ WHERE NOT EXISTS (
 --     本地执行：**已执行 2026-10-20 11:14**（本机 factory_db；执行后 SHOW INDEX 只剩 PRIMARY /
 --       idx_record_date / idx_material_code / idx_tank_code）。
 --     生产执行：**待执行**（本机连不上生产库；脚本见上，执行后在此补时间与备份 md5）。
+
+-- ===========================================================================
+-- 24) 分层访问与写操作留痕（2026-10-20，变更-129）
+--
+-- 使用方要求：游客能看见所有功能但点锁定的提示"需要注册"；注册用户只读；
+-- 写操作一律回管理员；**所有越权尝试与写操作都要留痕（谁 / IP / 什么时候 / 动了什么）**。
+--
+-- 本步只做两件事：
+--   a) 建 audit_event 表（审计落点）
+--   b) 建一个新的只读角色 member（自助注册的账号用它）
+--
+-- 改前核对：
+--   SELECT COUNT(*) FROM information_schema.tables
+--    WHERE table_schema = DATABASE() AND table_name = 'audit_event';   -- 期望 0
+--   SELECT COUNT(*) FROM sys_role WHERE role_key = 'member';           -- 期望 0
+--
+-- 改后复核：
+--   SELECT COUNT(*) FROM information_schema.tables
+--    WHERE table_schema = DATABASE() AND table_name = 'audit_event';   -- 期望 1
+--   SELECT id, role_name, role_key FROM sys_role WHERE role_key = 'member';   -- 期望 1 行
+--   SELECT COUNT(*) FROM sys_role_permission rp
+--     JOIN sys_role r ON r.id = rp.role_id WHERE r.role_key = 'member';       -- 期望 0（member 不给写权限）
+--
+-- 回滚：
+--   DROP TABLE IF EXISTS audit_event;
+--   DELETE FROM sys_role WHERE role_key = 'member';   -- 若无用户引用可直接删
+--
+-- ⚠️ member 是**只读**角色：**不要**给它任何 *:edit / *:import / *:upload / *:delete。
+--    它连 *:view 都不需要 —— 四个台账页改成"登录即可看"，走的是登录闸门而不是权限位。
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS `audit_event` (
+  `id`            bigint       NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `event`         varchar(32)  NOT NULL COMMENT 'register/login/logout/write_denied/write_ok/locked_clicked',
+  `username`      varchar(64)  NOT NULL DEFAULT '' COMMENT '登录名；匿名记空串',
+  `ip`            varchar(64)  NOT NULL DEFAULT '' COMMENT 'X-Forwarded-For 第一个，回落到 remoteAddr',
+  `user_agent`    varchar(255) NOT NULL DEFAULT '' COMMENT 'User-Agent，截断 255',
+  `method`        varchar(8)   NOT NULL DEFAULT '' COMMENT 'GET/POST/...；注册与登录事件留空',
+  `path`          varchar(255) NOT NULL DEFAULT '' COMMENT '请求路径',
+  `target`        varchar(128) NOT NULL DEFAULT '' COMMENT '目标：表名或文件前缀（如 archive/）',
+  `params_digest` varchar(64)  NOT NULL DEFAULT '' COMMENT '参数摘要 sha256 前 16 位；**绝不存正文**',
+  `result`        varchar(16)  NOT NULL DEFAULT '' COMMENT 'ok / denied',
+  `created_at`    datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发生时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_created` (`created_at`),
+  KEY `idx_username` (`username`),
+  KEY `idx_event` (`event`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  COMMENT='写操作与越权尝试的留痕（IP/UA 属个人数据：仅 admin 可查，保留 180 天）';
+
+-- 自助注册的只读账号角色（幂等：已存在只更新描述）
+INSERT INTO `sys_role` (`role_name`, `role_key`, `description`)
+VALUES ('普通用户', 'member', '自助注册的只读账号；写操作一律回管理员（变更-129）')
+ON DUPLICATE KEY UPDATE `description` = VALUES(`description`);
