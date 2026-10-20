@@ -7,6 +7,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * Sa-Token 配置：注册拦截器，开启注解式鉴权 + 写操作角色闸门。
@@ -18,7 +19,7 @@ public class SaTokenConfigure implements WebMvcConfigurer {
      * 写操作白名单：登录/退出写的是会话不是业务库，且必须匿名可达；
      * /error 必须放行，否则 POST 出错后的 ERROR 转发会被拦成 500，盖掉干净的 401/403。
      */
-    private static final String[] WRITE_WHITELIST = {"/api/login", "/api/logout", "/error"};
+    private static final String[] WRITE_WHITELIST = {"/api/login", "/api/logout", "/api/register", "/api/audit/locked-click", "/error"};
 
     /**
      * 「只给 admin 看」的台账明细路径（决策-004）：工单 / 领料 / 入库 / 货物移动 / 采购进度。
@@ -39,12 +40,33 @@ public class SaTokenConfigure implements WebMvcConfigurer {
      * 将来要给车间主任/采购开"只看自己那部分"的看板时，**另开一个只读接口**，
      * 不要把这里放开。
      */
-    private static final String[] ADMIN_READ_PATTERNS = {
-            "/api/work-order/**", "/api/pick/**", "/api/inbound/**", "/api/goods-move/**",
-            "/api/purchase/**"};
+    private static final String[] ADMIN_READ_PATTERNS = {"/api/purchase/**"};
+
+    /**
+     * 「登录即可读」的接口（变更-129 分层访问）。
+     *
+     * <p>此前这几组读接口**只允许 admin**（决策-004）。使用方后来要求：工单/领料/入库/核算
+     * 对**注册用户**开放只读，游客点它则提示"需要注册"。
+     *
+     * <p>⚠️ 不能简单把这几条从 ADMIN_READ_PATTERNS 里删掉 —— 删了它们就变成**匿名可读**，
+     * 游客直接 curl 就能拿到厂里的台账。所以是**换闸门**，不是**拆闸门**：
+     * 从"admin 才能读"降到"登录才能读"，匿名仍然是 401。
+     *
+     * <p>前端对应地把这几页的 access 从 admin 改成 login；两边必须同时生效
+     * （只改前端 = 数据仍公开；只改后端 = 注册用户点进去满屏 401）。
+     */
+    private static final String[] LOGIN_READ_PATTERNS = {
+            "/api/work-order/**", "/api/pick/**", "/api/inbound/**", "/api/goods-move/**"};
+
+    @Autowired
+    private org.example.audit.AuditInterceptor auditInterceptor;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // 写操作留痕（变更-129）。放在 Sa-Token 之后：它只读取"成功/失败"，不参与鉴权判断。
+        registry.addInterceptor(auditInterceptor)
+                .addPathPatterns("/**")
+                .excludePathPatterns("/error");
         registry.addInterceptor(new SaInterceptor(handle -> {
             // 传入 auth 函数不会关掉注解鉴权（SaInterceptor.isAnnotation 默认仍为 true），
             // preHandle 先跑 @SaCheck* 再跑这里，两层是叠加关系。
@@ -62,6 +84,12 @@ public class SaTokenConfigure implements WebMvcConfigurer {
             // 只藏前端 = 数据仍然公开，只锁后端 = 非 admin 点进去满屏 403。
             // /api/work-order/** 一并盖住 /list、/detail、/image/list
             // （/import/**、/ocr/** 是 POST，已被闸门 1 覆盖）。
+            // 闸门 2：台账读接口 —— **登录即可**（变更-129）。匿名 401，任何角色都能读。
+            SaRouter.match(SaHttpMethod.GET)
+                    .match(LOGIN_READ_PATTERNS)
+                    .check(r -> StpUtil.checkLogin());
+
+            // 闸门 3：采购读接口 —— 仍只允许 admin（使用方 2026-10-20 确认：带价格与 OA 单号）。
             SaRouter.match(SaHttpMethod.GET)
                     .match(ADMIN_READ_PATTERNS)
                     .check(r -> StpUtil.checkRole("admin"));

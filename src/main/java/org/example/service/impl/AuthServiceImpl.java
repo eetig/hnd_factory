@@ -32,6 +32,22 @@ public class AuthServiceImpl implements AuthService {
     @Autowired
     private SysRolePermissionMapper sysRolePermissionMapper;
 
+    @Autowired
+    private org.example.audit.AuditRecorder auditRecorder;
+
+    /** 自助注册开关（application.yml 的 app.register.enabled，默认开） */
+    @org.springframework.beans.factory.annotation.Value("${app.register.enabled:true}")
+    private boolean registerEnabled;
+
+    /**
+     * 同一 IP 每小时最多 3 次注册。
+     * 内存计数即可：内网工具、重启清零无所谓；真要抗刷应该上 Redis 或网关限流。
+     */
+    private final java.util.Map<String, java.util.Deque<Long>> registerAttempts =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final int REGISTER_LIMIT_PER_HOUR = 3;
+
     @Override
     public LoginVO login(LoginDTO dto) {
         // 1. 查用户
@@ -54,6 +70,10 @@ public class AuthServiceImpl implements AuthService {
 
         // 3. 组装返回
         SysRole role = loadRole(user);
+        auditRecorder.recordAuthEvent(
+                org.example.constant.AuditEventType.LOGIN, user.getUsername(),
+                org.example.audit.RequestMetadata.currentIp(),
+                org.example.audit.RequestMetadata.currentUserAgent());
         LoginVO vo = new LoginVO();
         vo.setToken(StpUtil.getTokenValue());
         vo.setUserId(user.getId());
@@ -66,7 +86,68 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    public LoginVO register(org.example.dto.RegisterDTO dto) {
+        if (!registerEnabled) {
+            throw new BusinessException("注册已关闭，请联系管理员开通账号");
+        }
+        String ip = org.example.audit.RequestMetadata.currentIp();
+        String ua = org.example.audit.RequestMetadata.currentUserAgent();
+        checkRegisterRate(ip);
+
+        String username = dto.getUsername().trim();
+        Long exists = sysUserMapper.selectCount(
+                new QueryWrapper<SysUser>().eq("username", username));
+        if (exists != null && exists > 0) {
+            throw new BusinessException("账号已被占用，换一个");
+        }
+
+        // 角色**固定** member（只读）。绝不接受客户端传角色 —— 那是越权漏洞的经典来源。
+        SysRole member = sysRoleMapper.selectOne(
+                new QueryWrapper<SysRole>().eq("role_key", "member"));
+        if (member == null) {
+            throw new BusinessException("系统缺少 member 角色，请联系管理员（库未执行第 24 步）");
+        }
+
+        SysUser user = new SysUser();
+        user.setUsername(username);
+        user.setPassword(BCrypt.hashpw(dto.getPassword()));
+        user.setRealName(dto.getRealName() == null || dto.getRealName().isBlank()
+                ? username : dto.getRealName().trim());
+        user.setRoleId(member.getId());
+        user.setStatus(1);
+        sysUserMapper.insert(user);
+
+        auditRecorder.recordAuthEvent(
+                org.example.constant.AuditEventType.REGISTER, username, ip, ua);
+
+        LoginDTO loginDTO = new LoginDTO();
+        loginDTO.setUsername(username);
+        loginDTO.setPassword(dto.getPassword());
+        return login(loginDTO);
+    }
+
+    /** 同一 IP 每小时最多 3 次；超了直接拒，不做"排队等待" */
+    private void checkRegisterRate(String ip) {
+        long now = System.currentTimeMillis();
+        long oneHourAgo = now - 3_600_000L;
+        java.util.Deque<Long> hits = registerAttempts.computeIfAbsent(
+                ip == null ? "" : ip, k -> new java.util.concurrent.ConcurrentLinkedDeque<>());
+        while (!hits.isEmpty() && hits.peekFirst() < oneHourAgo) {
+            hits.pollFirst();
+        }
+        if (hits.size() >= REGISTER_LIMIT_PER_HOUR) {
+            throw new BusinessException("注册太频繁，请一小时后再试");
+        }
+        hits.addLast(now);
+    }
+
+    @Override
     public void logout() {
+        String username = org.example.audit.RequestMetadata.username();
+        String ip = org.example.audit.RequestMetadata.currentIp();
+        String ua = org.example.audit.RequestMetadata.currentUserAgent();
+        auditRecorder.recordAuthEvent(
+                org.example.constant.AuditEventType.LOGOUT, username, ip, ua);
         StpUtil.logout();
     }
 

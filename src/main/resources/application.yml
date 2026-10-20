@@ -82,3 +82,8 @@ purchase:
     enabled: ${PURCHASE_ALERT_ENABLED:false}
     # 企业微信「群机器人」Webhook 地址（群设置 → 群机器人 → 添加 → 复制 Webhook 地址）
     webhook: ${PURCHASE_ALERT_WEBHOOK:}
+
+# 自助注册开关（变更-129）。内网工具常会关掉它，关掉后 POST /api/register 返回 403 并提示联系管理员。
+app:
+  register:
+    enabled: true
