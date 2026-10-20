@@ -55,6 +55,21 @@
 - ⚠️ 本机 `sudo` 密码与 SSH 私钥**不写进仓库**（由使用方单独提供）；SSH 只接受密钥登录
 - 回滚锚点：`/opt/<服务>/*.jar.bak-<时间戳>` + 旧镜像标签；每次部署前先备份 jar 与库
 
+### 后端部署：jar 在镜像里，**光拷 /opt 不会生效**
+
+2026-10-20 踩过：把新 jar 传到 `/opt/hnd_factory/hnd_factory.jar` 再 `docker restart`，
+容器里跑的**还是旧 jar**（`docker inspect` 显示只挂了 `logs`，jar 是 `COPY` 进镜像的）。
+表现极具误导性：新端点 404、注册接口 401，看起来像代码写错了。
+
+正确做法（不改镜像，最快）：
+```sh
+docker cp /opt/hnd_factory/hnd_factory.jar hnd_factory:/app/hnd_factory.jar
+docker restart hnd_factory
+# 必验：容器内 jar 的 md5 与宿主机一致
+docker exec hnd_factory md5sum /app/hnd_factory.jar
+```
+**每次部署后都要比一次 md5** —— 这是唯一能立刻发现"没换上去"的动作。
+
 ### 前端部署：必须**整目录原子换**，不要逐个文件覆盖
 
 2026-10-20 踩过：先 `mv assets assets.old` 再拷新 `assets`、再拷新 `index.html` ——
