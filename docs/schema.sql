@@ -1682,3 +1682,27 @@ WHERE `container_type` IS NULL;
 --     ⚠️ 一旦开始用（有真实资料上传），回滚前必须先把 MinIO 里的 archive/ 对象和两张表一起备份。
 --
 --     生产执行：**尚未执行**（等后端与前端一起上；执行后在此补时间与备份 md5）。
+
+-- 资料归档的初始 7 大类（变更-126）。
+--
+-- 为什么要有种子：分类树空着的话，使用方第一次进来看到一片空白，不知道该从哪开始分类。
+-- 这 7 类是化工厂最常见的大类，**子类由使用方自己加**（各厂差异全在子类上）。
+--
+-- ⚠️ 幂等靠 WHERE NOT EXISTS：`uk_parent_name (parent_id, name)` 对 parent_id IS NULL
+--    是**不生效**的（MySQL 唯一索引不约束 NULL），光靠唯一键会种出重复大类。
+--    应用层也补了同层查重（ArchiveServiceImpl#saveCategory），两处都在。
+INSERT INTO `archive_category` (`parent_id`, `name`, `sort_no`)
+SELECT NULL, x.`name`, x.`sort_no`
+FROM (
+    SELECT '证照与资质' AS `name`, 10 AS `sort_no` UNION ALL
+    SELECT '安全与环保',          20 UNION ALL
+    SELECT '设备与图纸',          30 UNION ALL
+    SELECT '质量与检验',          40 UNION ALL
+    SELECT '台账与记录',          50 UNION ALL
+    SELECT '合同与采购',          60 UNION ALL
+    SELECT '人员与培训',          70
+) x
+WHERE NOT EXISTS (
+    SELECT 1 FROM `archive_category` c
+     WHERE c.`parent_id` IS NULL AND c.`name` = x.`name`
+);

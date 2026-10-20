@@ -24,7 +24,21 @@ import org.springframework.web.multipart.MultipartFile;
  * <p>与 {@link ImgFeignClient} 一样：上传一律由本服务转发（那个服务不对外暴露，
  * 也没有鉴权注解），权限位关在本服务的 Controller 上。
  */
-@FeignClient(name = "file-service")
+@FeignClient(
+    name = "file-service",
+    /*
+     * ⚠️ contextId 必须写，而且**不能**和 ImgFeignClient 相同。
+     *
+     * Spring Cloud OpenFeign 给每个客户端注册一个
+     * `<name>.FeignClientSpecification` bean；同一个服务名有**两个**客户端而不区分
+     * contextId，第二个注册时就会 BeanDefinitionOverrideException 直接把应用启不起来：
+     *   "The bean 'file-service.FeignClientSpecification' could not be registered"
+     *
+     * 2026-10-20 改名当天就踩了这个 —— **单元测试不启动 Spring 上下文，抓不到**，
+     * 只有真启动才炸。所以补了 FeignClientNameUniquenessTest 扫源码兜底。
+     */
+    contextId = "fileServiceArchive"
+)
 public interface FileFeignClient {
 
     /** 上传：file-service 原样存字节，回裸对象名 + 原文件名 + 大小 + Content-Type */

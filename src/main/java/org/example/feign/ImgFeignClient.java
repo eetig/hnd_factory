@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
 
-// name = file-service 和文件服务 spring.application.name 保持一致（2026-10-20 由 file-service 更名：它现在同时管图片与文档）
+// name = file-service，与服务端 spring.application.name 保持一致（2026-10-20 由 img-service 更名：它现在同时管图片与文档）
 @FeignClient(name = "file-service")
 public interface ImgFeignClient {
     // 根据 fileName 生成 MinIO 预签名访问 URL

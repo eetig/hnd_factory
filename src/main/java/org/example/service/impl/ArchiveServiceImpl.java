@@ -186,6 +186,28 @@ public class ArchiveServiceImpl implements ArchiveService {
             }
         }
 
+        /*
+         * 同层重名检查。
+         *
+         * ⚠️ 不能指望 `uk_parent_name (parent_id, name)`：MySQL 的唯一索引**不约束 NULL**，
+         * 而"大类"的 parent_id 正是 NULL —— 也就是说两个大类可以同名，唯一键根本拦不住。
+         * 子类（parent_id 非空）由数据库兜底，这里两档一起显式查，行为才一致。
+         */
+        LambdaQueryWrapper<ArchiveCategory> dup = new LambdaQueryWrapper<ArchiveCategory>()
+                .eq(ArchiveCategory::getName, trimmed);
+        if (parentId == null) {
+            dup.isNull(ArchiveCategory::getParentId);
+        } else {
+            dup.eq(ArchiveCategory::getParentId, parentId);
+        }
+        if (id != null) {
+            dup.ne(ArchiveCategory::getId, id);
+        }
+        Long sameName = categoryMapper.selectCount(dup);
+        if (sameName != null && sameName > 0) {
+            throw new BusinessException("同一层已经有叫「" + trimmed + "」的分类了");
+        }
+
         ArchiveCategory row = id == null ? new ArchiveCategory() : categoryMapper.selectById(id);
         if (row == null) {
             throw new BusinessException("分类不存在");
