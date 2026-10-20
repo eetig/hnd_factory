@@ -27,7 +27,10 @@ public class AuditInterceptor implements HandlerInterceptor {
 
     /** 这几个接口由 AuthServiceImpl 记，避免重复 */
     private static final Set<String> SKIP_PATHS = Set.of(
-            "/api/login", "/api/logout", "/api/register");
+            "/api/login", "/api/logout", "/api/register",
+            // 变更-129b：这个端点自己记 locked_clicked，若再被这里记一次 write_ok，
+            // 游客点一下锁定功能就会产生两条记录
+            "/api/audit/locked-click");
 
     @Autowired
     private AuditRecorder auditRecorder;
