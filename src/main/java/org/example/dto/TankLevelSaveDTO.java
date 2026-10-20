@@ -29,4 +29,17 @@ public class TankLevelSaveDTO {
     private String tankCode;               // 容器编号（设备位号，与记录日期联合唯一）
     private BigDecimal levelValue;         // 容器液位(mm)
     private BigDecimal theoreticalWeight;  // 理论质量(kg)
+
+    /**
+     * 「同一天同一容器已有一条，仍然要再存一条」的确认标记（2026-10-20，变更-127）。
+     *
+     * <p>唯一键 {@code uk_date_tank} 已按使用方口径去掉：同一天可以有多条，
+     * 但**同一天同一容器**重复录入多半是误触，所以保存前先拦一道、把选择权交给用户。
+     * 前端第一次不带它提交 → 后端回 409 让人确认；用户点「仍要保存」→ 带上
+     * {@code true} 重提，校验跳过。
+     *
+     * <p>用 Boolean 而不是 boolean：缺省（老客户端）必须是 {@code false} 语义 ——
+     * 老 APK 不带这个字段，那就照旧被拦，不能在升级期间静默产生重复数据。
+     */
+    private Boolean confirmDuplicate;
 }

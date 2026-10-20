@@ -110,6 +110,21 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 液位记录「同一天同一容器已存在」—— 可继续的冲突（2026-10-20，变更-127）。
+     *
+     * <p>与 {@link BusinessException} 一样回 HTTP 200（这是填表时的正常分支，
+     * 不该让浏览器/监控当故障看），但业务码给 <b>409</b>：前端据此弹「仍要保存 / 取消」，
+     * 确认后带 {@code confirmDuplicate=true} 重提即可落库。
+     *
+     * <p>老客户端（不带确认标记）也会收到 409 —— 它们只读 {@code msg}，
+     * 表现为"多了一句提示、要再点一次"，而不是静默产生重复行。
+     */
+    @ExceptionHandler(TankLevelDuplicateException.class)
+    public Result<Void> handleTankLevelDuplicate(TankLevelDuplicateException e) {
+        return Result.error(409, e.getMessage());
+    }
+
+    /**
      * 入参校验失败（{@code @Valid} 挂在查询 DTO / 请求体上时）。
      *
      * <p>目前只有一处会走到：列表接口的 {@link org.example.dto.PageQueryDTO} 要求

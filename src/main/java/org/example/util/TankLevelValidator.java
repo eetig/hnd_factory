@@ -37,10 +37,11 @@ public final class TankLevelValidator {
         if (isBlank(dto.getTankName())) {
             return "请填写容器名称。";
         }
-        // 容器编号【不再校验】：界面（hnd_factory_UI）已撤掉这一栏，新增的记录必然没有编号，
-        // 再拦就是「页面上根本填不了、却被告知必须填」。空编号落库后由唯一键
-        // uk_date_tank (record_date, tank_code) 兜底 —— 此时它退化成「一天一条」，
-        // 撞上时 Service 会给可读提示（见 TankLevelRecordServiceImpl.duplicateMessage）。
+        // 容器编号【不再校验】：界面已撤掉这一栏，新增的记录必然没有编号。
+        // 2026-10-20（变更-127）起空编号**显式落 NULL**、唯一键 uk_date_tank 也已去掉 ——
+        // 「同一天多条」由库层面放开，重复的判定改在 Service 里按「日期 + 容器名称」提示
+        // （见 TankLevelRecordServiceImpl.requireNoSameDayTank）。
+        // ⚠️ 别再把"空编号靠唯一键兜底"这句写回来：正是那条假设让生产上一天只能存一条。
         if (isNegative(dto.getLevelValue())) {
             return "容器液位不能为负数。";
         }

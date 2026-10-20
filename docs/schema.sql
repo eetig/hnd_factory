@@ -300,15 +300,16 @@ CREATE TABLE IF NOT EXISTS `material_master` (
 -- —— 与工单图片、领料汇总、生产入库的图片约定一致（《前后端改动统筹》契约 2.3），
 -- 前端拿到的始终是相对路径，同源部署无需改配置。
 --
--- 唯一键 (记录日期 + 容器编号)：**同一天可以有多条记录**（变更-013）。
---   tank_code 是「设备位号」，比容器名称稳定：名称的叫法会改（V150储罐A → 150#罐），编号不会，
---   因此唯一键挂在编号上；容器名称、属地退化为随行展示的信息列。
---   ⚠️ 2026-10-02 起 tank_code 改为**可空**：容器编号那一栏已从界面撤掉（使用方要求），
---      新增的记录都没有编号，再按 '' 参与唯一键就变成「一天只能有一条」——
---      而业务上月底同一天本来就有一批容器要各记一条。改存 NULL 后 MySQL 唯一索引
---      不约束 NULL（多个 NULL 互不相等），同一天想记几条就几条；
---      真有编号的历史行仍受 (日期 + 编号) 保护，唯一键不会形同虚设。
---      这正是变更-004-1 当时刻意避开 NULL 的写法 —— 需求反过来后要把这条一并翻过来。
+-- 唯一键 (记录日期 + 容器编号)：**已废弃**（2026-10-20，变更-127，见本文件第 24 步）。
+--   历史：变更-004-1 把唯一键挂在 (日期 + 容器编号) 上；变更-013 让 tank_code 可空、
+--   空编号存 NULL，靠"MySQL 唯一索引不约束 NULL"来放行「同一天多条」。
+--   ⚠️ 这条假设在生产上**塌了两次**：新增记录的空编号实际落成了空串 ''（MyBatis-Plus
+--   跳过 null 字段 → 吃列的 DEFAULT，而生产列的 DEFAULT 是 ''），空串受唯一键约束，
+--   于是「一天只能存一条」；2026-10-20 手机端同一天记第二台容器必报
+--   「该记录日期已存在一条容器编号为空的记录」。
+--   现在：唯一键整条去掉（使用方口径：同一天可以多条，重复只做保存前提示），
+--   且 tank_code 无值时**显式写 NULL**（实体 TankLevelRecord 上的 insertStrategy=ALWAYS），
+--   不再依赖任何列的默认值。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `tank_level_record` (
   `id`                 bigint        NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -318,13 +319,12 @@ CREATE TABLE IF NOT EXISTS `tank_level_record` (
   `material_code`      varchar(32)   DEFAULT NULL COMMENT '物料编码（关联物料主数据，可空）',
   `material_name`      varchar(128)  DEFAULT NULL COMMENT '物料名称',
   `tank_name`          varchar(64)   NOT NULL COMMENT '容器名称（储罐号）',
-  `tank_code`          varchar(64)   DEFAULT NULL COMMENT '容器编号（设备位号）；为空时同一天可有多条，填了则与记录日期联合唯一',
+  `tank_code`          varchar(64)   DEFAULT NULL COMMENT '容器编号（设备位号）；界面不填，无值时为 NULL',
   `level_value`        decimal(18,4) DEFAULT NULL COMMENT '容器液位',
   `theoretical_weight` decimal(18,4) DEFAULT NULL COMMENT '理论质量(KG)',
   `create_time`        datetime      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time`        datetime      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_date_tank` (`record_date`, `tank_code`),
   KEY `idx_record_date` (`record_date`),
   KEY `idx_material_code` (`material_code`),
   KEY `idx_tank_code` (`tank_code`)
@@ -1706,3 +1706,55 @@ WHERE NOT EXISTS (
     SELECT 1 FROM `archive_category` c
      WHERE c.`parent_id` IS NULL AND c.`name` = x.`name`
 );
+-- ---------------------------------------------------------------------------
+-- 24) 液位记录：去掉唯一键 uk_date_tank + 空容器编号归一为 NULL（变更-127，2026-10-20）
+--
+--     起因（使用方真机截图）：同一天录第二台容器必报
+--       「该记录日期已存在一条容器编号为空的记录，请改记录日期。」
+--     而界面从变更-014 起就**没有「容器编号」这一栏**，用户无从下手。
+--
+--     根因（两层，缺一不可）：
+--       ① 生产库 `tank_code` 列的 DEFAULT 仍是 ''（变更-013 只改了"可空"，没改默认值），
+--          而实体没有 insert 策略、MyBatis-Plus 默认 NOT_NULL **跳过 null 字段** →
+--          INSERT 里根本没有 tank_code → 落库吃默认值 '' → 空串受唯一键约束 → 一天一条。
+--          （2026-10-20 生产数据复核：32 行里 30 行是 NULL、2 行是 ''，正是两条写入路径的指纹。）
+--       ② 唯一键 (record_date, tank_code) 本身按使用方口径就该去掉：
+--          「同一天可以录多条，重复只提示一次」——不能让库在没有任何提示的情况下拒绝。
+--
+--     代码侧配套（已随本变更合入，缺了它本步会失效）：
+--       · `TankLevelRecord.tankCode` 加了 `@TableField(insertStrategy = ALWAYS)` → 显式写 NULL；
+--       · `TankLevelRecordServiceImpl` 把空白编号归一成 null，并按「日期 + 容器名称」
+--         做保存前提示（409 + confirmDuplicate 可继续）。
+--     ⚠️ 也就是说：**代码先上、本步后跑**也不会再出现"一天只能一条"（NULL 不受约束）；
+--        本步做的是清语义 + 清历史脏数据。
+--
+--     改前核对（只读）：
+--       SHOW CREATE TABLE `tank_level_record`;                       -- 期望仍能看到 uk_date_tank
+--       SELECT COUNT(*) AS empty_code FROM `tank_level_record` WHERE `tank_code` = '';   -- 生产期望 2
+--       SELECT COUNT(*) AS null_code  FROM `tank_level_record` WHERE `tank_code` IS NULL; -- 生产期望 30
+--
+--     执行（三句，顺序不可换；第 2 句必须在第 1 句之后 —— 否则去掉约束前就有重复空串行会报错）：
+--       ALTER TABLE `tank_level_record` DROP INDEX `uk_date_tank`;
+--       UPDATE `tank_level_record` SET `tank_code` = NULL WHERE `tank_code` = '';
+--       ALTER TABLE `tank_level_record`
+--         MODIFY COLUMN `tank_code` varchar(64) DEFAULT NULL
+--           COMMENT '容器编号（设备位号）；界面不填，无值时为 NULL';
+--
+--     改后复核（只读）：
+--       SHOW CREATE TABLE `tank_level_record`;   -- 期望：无 uk_date_tank；tank_code 为 DEFAULT NULL
+--       SELECT COUNT(*) FROM `tank_level_record` WHERE `tank_code` = '';   -- 期望 0
+--       SELECT COUNT(*) FROM `tank_level_record`;                          -- 期望与改前总行数一致
+--
+--     回滚（⚠️ 有损前提：只有在"同一天同容器"没有产生重复行时才可无损回滚）：
+--       ALTER TABLE `tank_level_record`
+--         MODIFY COLUMN `tank_code` varchar(64) DEFAULT '' COMMENT '容器编号（设备位号）';
+--       UPDATE `tank_level_record` SET `tank_code` = '' WHERE `tank_code` IS NULL;
+--       ALTER TABLE `tank_level_record`
+--         ADD UNIQUE KEY `uk_date_tank` (`record_date`, `tank_code`);
+--       -- 回滚前先跑这句对账，非空则**不要**回滚（加回唯一键会直接失败）：
+--       SELECT `record_date`, COUNT(*) FROM `tank_level_record`
+--        GROUP BY `record_date` HAVING COUNT(*) > 1;
+--
+--     本地执行：**已执行 2026-10-20 11:14**（本机 factory_db；执行后 SHOW INDEX 只剩 PRIMARY /
+--       idx_record_date / idx_material_code / idx_tank_code）。
+--     生产执行：**待执行**（本机连不上生产库；脚本见上，执行后在此补时间与备份 md5）。

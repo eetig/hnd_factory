@@ -8,6 +8,7 @@ import org.example.dto.Result;
 import org.example.dto.TankLevelImageVO;
 import org.example.dto.TankLevelQueryDTO;
 import org.example.dto.TankLevelSaveDTO;
+import org.example.dto.TankLevelSuggestionsVO;
 import org.example.dto.TankLevelVO;
 import org.example.service.TankLevelImageService;
 import org.example.service.TankLevelRecordService;
@@ -74,6 +75,23 @@ public class TankLevelController {
     @PostMapping("/save")
     public Result<TankLevelVO> save(@RequestBody TankLevelSaveDTO dto) {
         return Result.success("保存成功", tankLevelRecordService.saveRecord(dto));
+    }
+
+    /**
+     * 录入弹层的候选字典：库里出现过的属地 + 容器名称（2026-10-20，变更-129）。
+     *
+     * <p>免登录：它只回"这个库里有哪几个车间/罐名"，与列表接口本就公开的信息同级，
+     * 不含数量、液位等业务值。
+     *
+     * <p>为什么不在前端翻列表拼：列表按日期分页，而候选要**全库**去重 ——
+     * 翻页拼不出全量，且每条记录还要自己去重排序。
+     */
+    @GetMapping("/suggestions")
+    public Result<TankLevelSuggestionsVO> suggestions() {
+        TankLevelSuggestionsVO vo = new TankLevelSuggestionsVO();
+        vo.setLocations(tankLevelRecordService.listLocations());
+        vo.setTankNames(tankLevelRecordService.listTankNames());
+        return Result.success(vo);
     }
 
     /** 删除一条记录（连同它在 file-service 上的图据） */

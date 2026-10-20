@@ -11,6 +11,7 @@ import org.example.dto.TankLevelSaveDTO;
 import org.example.dto.TankLevelVO;
 import org.example.entity.TankLevelRecord;
 import org.example.exception.BusinessException;
+import org.example.exception.TankLevelDuplicateException;
 import org.example.mapper.TankLevelRecordMapper;
 import org.example.service.TankLevelImageService;
 import org.example.service.TankLevelRecordService;
@@ -98,6 +99,19 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
     }
 
     @Override
+    public List<String> listTankNames() {
+        // 与 listLocations 同款：表很小（一年 12 × 容器数），只取一列再内存去重，
+        // 换来的是一致、可读的写法与中文排序（库的排序规则对汉字是按码点的）
+        return baseMapper.selectList(new QueryWrapper<TankLevelRecord>().select("tank_name")).stream()
+                .map(TankLevelRecord::getTankName)
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                .sorted(Collator.getInstance(Locale.CHINA))
+                .collect(Collectors.toList());
+    }
+
+    @Override
     public TankLevelVO saveRecord(TankLevelSaveDTO dto) {
         String error = TankLevelValidator.validate(dto);
         if (error != null) {
@@ -113,20 +127,26 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
         record.setMaterialCode(trim(dto.getMaterialCode()));
         record.setMaterialName(trim(dto.getMaterialName()));
         record.setTankName(trim(dto.getTankName()));
-        record.setTankCode(trim(dto.getTankCode()));
+        // 空串统一落成 null（2026-10-20，变更-127）：容器编号界面已不让人填，
+        // 而 '' 与 NULL 在唯一键下语义完全不同 —— '' 受约束（一天只能一条）、NULL 不受。
+        // 这里显式归一，配合实体上的 insertStrategy=ALWAYS，落库一定是 NULL。
+        record.setTankCode(blankToNull(dto.getTankCode()));
         record.setLevelValue(dto.getLevelValue());
         record.setTheoreticalWeight(dto.getTheoreticalWeight());
 
         try {
             if (dto.getId() == null) {
+                requireNoSameDayTank(record, dto.getConfirmDuplicate());
                 baseMapper.insert(record);
             } else {
                 requireRecord(dto.getId());
                 record.setId(dto.getId());
+                requireNoSameDayTank(record, dto.getConfirmDuplicate());
                 updateAllFields(record);
             }
         } catch (DuplicateKeyException e) {
-            // 撞唯一键 uk_date_tank：这是正常的业务冲突（同一天同一容器编号只能一条），
+            // 撞唯一键 uk_date_tank：只可能发生在**还没去掉该键的老库**上，
+            // 且容器编号是真实值（非空）时。空编号现在显式写 NULL，不受该键约束。
             // 不能把 SQL 异常原样透给前端 —— 用户看不到「哪一行哪一列冲突了」
             throw new BusinessException(duplicateMessage(record));
         }
@@ -173,16 +193,73 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
     /**
      * 唯一键 uk_date_tank 冲突时的提示语。
      *
-     * <p>变更-012 起 tank_code 可空、空编号存 NULL，而 MySQL 唯一索引不约束 NULL ——
-     * 「同一天多条」本身不会再冲突（页面新增的记录都没有编号，故第一条分支实际已走不到）。
-     * 留着它是为了兜两种情况：升级前遗留的行仍存着空串 ''，以及将来有人把接口当脚本用、
-     * 手填同一个编号在同一天插两次。
+     * <p>2026-10-20（变更-127）起唯一键在**新库**上已去掉、在老库上也不再被空编号触发
+     * （空编号显式写 NULL），所以这条只剩"有人真填了同一个容器编号、在同一天插两次"这一种情况。
+     * 文案里不再提"容器编号为空"——那句话在界面撤掉该字段后没有任何可操作性。
      */
     private static String duplicateMessage(TankLevelRecord record) {
-        if (!StringUtils.hasText(record.getTankCode())) {
-            return "该记录日期已存在一条容器编号为空的记录，请改记录日期。";
-        }
         return "同一天已存在容器编号为「" + record.getTankCode() + "」的记录，请改记录日期或容器编号。";
+    }
+
+    /**
+     * 「同一天同一容器已有一条」的保存前提示（2026-10-20，变更-127）。
+     *
+     * <p>为什么要拦：唯一键去掉之后，"同一天多条"在库层面完全放开，而同一天同一容器
+     * 重复录入基本只有一种原因 —— 手滑存了两次。不拦的话，重复行会安静地混进月底台账。
+     *
+     * <p>为什么是"提示"而不是"拒绝"：月底确实可能出现同一天同一容器补录第二条的正当情况
+     * （例如上午读数抄错、下午重抄一次要留痕）。所以给用户一个"仍要保存"的出口，
+     * 由 {@code confirmDuplicate} 决定是否跳过本校验。
+     *
+     * <p>比对口径：**记录日期 + 容器名称**（去空白后）。容器名称在设备台账里是唯一设备名，
+     * 属地只是归属信息、不该参与（同一台罐换了属地就不该算不重复）；用手打名称时
+     * "171产品包装罐A/B" 与 "171产品 包装罐A/B" 必须视为同一个，所以先归一化再比。
+     * 编辑时排除自己（否则"改了液位再保存"会被自己判成重复）。
+     */
+    private void requireNoSameDayTank(TankLevelRecord record, Boolean confirmed) {
+        if (Boolean.TRUE.equals(confirmed)) {
+            return;
+        }
+
+        // 按日期取当天全部记录再内存比对：一天最多十几台容器，比在 SQL 里写
+        // REPLACE/正则更可移植（也不依赖字符集/排序规则的等值语义）
+        List<TankLevelRecord> sameDay = baseMapper.selectList(
+                new QueryWrapper<TankLevelRecord>().eq("record_date", record.getRecordDate()));
+        if (sameDay == null || sameDay.isEmpty()) {
+            return;
+        }
+
+        String target = normalizeTankName(record.getTankName());
+        if (target.isEmpty()) {
+            return;
+        }
+
+        for (TankLevelRecord existing : sameDay) {
+            if (record.getId() != null && record.getId().equals(existing.getId())) {
+                continue;
+            }
+            if (target.equals(normalizeTankName(existing.getTankName()))) {
+                throw new TankLevelDuplicateException(duplicateConfirmMessage(record, existing));
+            }
+        }
+    }
+
+    private static String duplicateConfirmMessage(TankLevelRecord record, TankLevelRecord existing) {
+        String level = existing.getLevelValue() == null
+                ? "未填"
+                : existing.getLevelValue().stripTrailingZeros().toPlainString() + " mm";
+        return "「" + record.getTankName() + "」在 " + record.getRecordDate()
+                + " 已有一条记录（液位 " + level + "）。同一天同一容器再记一条吗？";
+    }
+
+    /** 容器名称归一化：去掉所有空白（含全角空格），null 当空串 */
+    private static String normalizeTankName(String name) {
+        return name == null ? "" : name.replaceAll("[\\s\\u3000]+", "");
+    }
+
+    /** 空白字符串（含只有空格的）→ null，其余原样 trim */
+    private static String blankToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     private TankLevelRecord requireRecord(Long id) {
