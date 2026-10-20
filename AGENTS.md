@@ -51,6 +51,23 @@
 - ⚠️ 本机 `sudo` 密码与 SSH 私钥**不写进仓库**（由使用方单独提供）；SSH 只接受密钥登录
 - 回滚锚点：`/opt/<服务>/*.jar.bak-<时间戳>` + 旧镜像标签；每次部署前先备份 jar 与库
 
+### 前端部署：必须**整目录原子换**，不要逐个文件覆盖
+
+2026-10-20 踩过：先 `mv assets assets.old` 再拷新 `assets`、再拷新 `index.html` ——
+中间那一两秒里 `index.html` 指向的旧 chunk 已经不在原位，**使用者正好刷新就会拿到 404，
+浏览器把 404 缓存下来 → 白屏，直到 Ctrl+F5**。表现是"四个页面全白、Console 无报错"，
+非常容易被误判成代码坏 / 后端 500（我们为此白查了半小时）。
+
+正确做法：
+```sh
+S=/opt/1panel/apps/openresty/openresty/www/sites/hnd-ui
+sudo cp -a /tmp/hnd-ui-new $S/index.new && sudo chown -R root:root $S/index.new
+sudo mv $S/index $S/index.prev-$(date +%Y%m%d-%H%M%S)
+sudo mv $S/index.new $S/index        # 这一步是原子的，窗口毫秒级
+```
+`index.html` 的缓存头已经是 `no-cache, must-revalidate`、`/assets/` 是 `immutable`（变更-096/102），
+**不要**再改它们；要修的是"换文件的过程不原子"这件事。
+
 ## 六、协作偏好（使用方）
 
 - 用**通俗中文**解释；操作步骤要**短**；自己的错**直说**，不要含糊
