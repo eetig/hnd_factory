@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import org.example.dto.DateRangeQueryDTO;
 import org.example.dto.ExcelResult;
 import org.example.dto.GoodsMoveSummaryVO;
+import org.example.dto.GoodsMoveQueryDTO;
 import org.example.dto.GoodsMoveVO;
 import org.example.dto.PageQueryDTO;
 import org.example.dto.WorkOrderImportSaveVO;
@@ -23,7 +24,7 @@ public interface MaterialMovementService {
      * 但控制器签名里一个 {@code @RequestParam} 都没有，参数被**静默丢掉**，
      * 前端只好把整表拿回来再本地按日期过滤。这次顺手把这个漏接收的参数补上。
      */
-    IPage<GoodsMoveVO> listPage(PageQueryDTO query);
+    IPage<GoodsMoveVO> listPage(GoodsMoveQueryDTO query);
 
     /**
      * 货物移动「按物料 + 来源库位汇总」—— 原辅料核算页的「已报工数」来源。

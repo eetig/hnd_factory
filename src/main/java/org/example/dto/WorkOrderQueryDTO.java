@@ -28,6 +28,16 @@ public class WorkOrderQueryDTO extends PageQueryDTO {
     /** 产成品名称（物料描述），精确匹配 —— 与筛选弹窗语义一致 */
     private String materialDesc;
 
+    /**
+     * 产成品编码（精确匹配，2026-10-21 变更-140）。
+     *
+     * <p>为什么要有它：核算钻取要按**编码**查报工明细。入库侧的物料名常是长包材名
+     * （{@code 三甲氧基氢硅烷_25kg_内衬铁桶_蓝色_华耐德}），而工单侧的 material_desc 是短名
+     * （{@code 三甲氧基氢硅烷}）—— 按名称查明细会一条都查不到，可那一行的"已报工数"明明有值
+     * （汇总是按编码对上的）。编码才是主键级别的键。
+     */
+    private String materialCode;
+
     /** 工单号，精确匹配 */
     private String orderNo;
 }

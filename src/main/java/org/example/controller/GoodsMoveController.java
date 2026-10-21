@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import jakarta.validation.Valid;
 import org.example.dto.DateRangeQueryDTO;
 import org.example.dto.GoodsMoveSummaryVO;
+import org.example.dto.GoodsMoveQueryDTO;
 import org.example.dto.GoodsMoveVO;
 import org.example.dto.PageQueryDTO;
 import org.example.dto.PageResult;
@@ -38,7 +39,7 @@ public class GoodsMoveController {
      * <p>{@code pageNum} / {@code pageSize} 必传，缺参回 400（理由见 {@link PageQueryDTO}）。
      */
     @GetMapping("/list")
-    public PageResult<GoodsMoveVO> list(@Valid PageQueryDTO query) {
+    public PageResult<GoodsMoveVO> list(@Valid GoodsMoveQueryDTO query) {
         IPage<GoodsMoveVO> page = materialMovementService.listPage(query);
         return PageResult.of(page.getRecords(), page.getTotal(),
                 query.resolvedPageNum(), query.resolvedPageSize());

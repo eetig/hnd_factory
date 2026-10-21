@@ -33,6 +33,7 @@ import static org.example.util.ExcelValueParser.parseDate;
 import static org.example.util.ExcelValueParser.parseDecimal;
 import static org.example.util.ExcelValueParser.parseInt;
 import static org.example.util.ExcelValueParser.trim;
+import org.example.dto.GoodsMoveQueryDTO;
 
 @Service
 public class MaterialMovementServiceImpl extends ServiceImpl<MaterialMovementMapper, MaterialMovement> implements MaterialMovementService {
@@ -87,9 +88,20 @@ public class MaterialMovementServiceImpl extends ServiceImpl<MaterialMovementMap
 
     // ================= 货物移动列表 =================
     @Override
-    public IPage<GoodsMoveVO> listPage(PageQueryDTO query) {
+    public IPage<GoodsMoveVO> listPage(GoodsMoveQueryDTO query) {
         Page<MaterialMovement> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
-        return baseMapper.selectPage(page, dateRangeOnly(query)
+
+        QueryWrapper<MaterialMovement> wrapper = dateRangeOnly(query);
+        // 2026-10-21 变更-140：钻取用 —— 原辅料核算点一行「已报工数」要看它由哪些货物移动组成，
+        // 必须能按物料编码过滤（日期口径与 /summary-by-material 一致：过账日期）
+        if (StringUtils.hasText(query.getMaterialCode())) {
+            wrapper.eq("material_code", query.getMaterialCode().trim());
+        }
+        if (StringUtils.hasText(query.getMaterialDesc())) {
+            wrapper.eq("material_desc", query.getMaterialDesc().trim());
+        }
+
+        return baseMapper.selectPage(page, wrapper
                         .orderByDesc("posting_date").orderByDesc("id"))
                 .convert(this::toGoodsMoveVO);
     }

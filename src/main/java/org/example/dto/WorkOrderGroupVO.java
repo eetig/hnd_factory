@@ -33,6 +33,16 @@ public class WorkOrderGroupVO {
     private String orderType;
 
     /** 产成品名称（工单的 material_desc） */
+    /**
+     * 产成品编码（2026-10-21 变更-140）。
+     *
+     * <p>为什么加它：工单核算的「已报工数」原先按**产成品名称**匹配入库行
+     * （buildReportedQtyMap 用归一化名称做 key）。名称里带 `_`、空格、中英混排，
+     * 入库侧和工单侧写差一个字符，报工数就被算成 0 —— 表里看着像"这批货没报工"。
+     * 编码是主键级别的键，拿它对得上就是真对得上。
+     */
+    private String materialCode;
+
     private String materialName;
 
     /** 订单数量合计 */

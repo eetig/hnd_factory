@@ -234,12 +234,15 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
         // 按「工单号前缀 + 产成品」分组：工单报工那一页的行主键就是「类型 + 产成品」。
         // 前缀→类型的映射只在 Java 里做一份（WorkOrderTypeEnum），不把前缀当类型吐给前端。
         QueryWrapper<WorkOrder> wrapper = filterOnly(query)
-                .select("LEFT(order_no, 4) AS order_no_prefix", "material_desc",
+                .select("LEFT(order_no, 4) AS order_no_prefix", "material_code", "material_desc",
                         "SUM(order_qty) AS order_qty", "SUM(confirmed_qty) AS confirmed_qty")
-                .groupBy("LEFT(order_no, 4)", "material_desc")
+                // 2026-10-21：分组键加上 material_code —— 工单核算要按编码匹配入库行，
+                // 只按名称分组时同一个名称可能混着不同编码（改名/换规格留下的历史数据）
+                .groupBy("LEFT(order_no, 4)", "material_code", "material_desc")
                 // 排序键用普通列（MyBatis-Plus 的 orderBy* 是把字符串原样拼进 ORDER BY 的）；
                 // 显示顺序由前端按类型字典排，这里只要结果确定
-                .orderByAsc("material_desc").orderByAsc("LEFT(order_no, 4)");
+                .orderByAsc("material_code").orderByAsc("material_desc")
+                .orderByAsc("LEFT(order_no, 4)");
 
         return baseMapper.selectMaps(wrapper).stream().map(row -> {
             WorkOrderGroupVO vo = new WorkOrderGroupVO();
@@ -250,6 +253,7 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
             // 这里一样：类型为空的行由前端跳过（见 index.vue 的 reportRows）
             vo.setTypeKey(type == null ? "" : type.getTypeKey());
             vo.setOrderType(type == null ? "" : type.getTypeName());
+            vo.setMaterialCode(trimToEmpty(row.get("material_code")));
             vo.setMaterialName(trimToEmpty(row.get("material_desc")));
             vo.setOrderQty(toBigDecimal(row.get("order_qty")));
             vo.setConfirmedQty(toBigDecimal(row.get("confirmed_qty")));
@@ -309,6 +313,9 @@ public class WorkOrderServiceImpl extends ServiceImpl<WorkOrderMapper, WorkOrder
             } else {
                 wrapper.likeRight("order_no", prefix);
             }
+        }
+        if (StringUtils.hasText(query.getMaterialCode())) {
+            wrapper.eq("material_code", query.getMaterialCode().trim());
         }
         if (StringUtils.hasText(query.getMaterialDesc())) {
             wrapper.eq("material_desc", query.getMaterialDesc().trim());
