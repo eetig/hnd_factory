@@ -19,7 +19,7 @@ public class SaTokenConfigure implements WebMvcConfigurer {
      * 写操作白名单：登录/退出写的是会话不是业务库，且必须匿名可达；
      * /error 必须放行，否则 POST 出错后的 ERROR 转发会被拦成 500，盖掉干净的 401/403。
      */
-    private static final String[] WRITE_WHITELIST = {"/api/login", "/api/logout", "/api/register", "/api/audit/locked-click", "/error"};
+    private static final String[] WRITE_WHITELIST = {"/api/login", "/api/logout", "/api/register", "/api/captcha/verify", "/api/audit/locked-click", "/error"};
 
     /**
      * 「只给 admin 看」的台账明细路径（决策-004）：工单 / 领料 / 入库 / 货物移动 / 采购进度。

@@ -35,6 +35,9 @@ public class AuthServiceImpl implements AuthService {
     @Autowired
     private org.example.audit.AuditRecorder auditRecorder;
 
+    @Autowired
+    private org.example.service.SliderCaptchaService sliderCaptchaService;
+
     /** 自助注册开关（application.yml 的 app.register.enabled，默认开） */
     @org.springframework.beans.factory.annotation.Value("${app.register.enabled:true}")
     private boolean registerEnabled;
@@ -89,6 +92,11 @@ public class AuthServiceImpl implements AuthService {
     public LoginVO register(org.example.dto.RegisterDTO dto) {
         if (!registerEnabled) {
             throw new BusinessException("注册已关闭，请联系管理员开通账号");
+        }
+        // 滑动验证（2026-10-21）：一次性 ticket，用掉即删。放在算密码哈希**之前** ——
+        // 没过验证的请求不该消耗一次 BCrypt。
+        if (!sliderCaptchaService.consumeTicket(dto.getCaptchaTicket())) {
+            throw new BusinessException("滑动验证已失效，请重新验证");
         }
         String ip = org.example.audit.RequestMetadata.currentIp();
         String ua = org.example.audit.RequestMetadata.currentUserAgent();

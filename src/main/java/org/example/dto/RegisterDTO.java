@@ -26,6 +26,13 @@ public class RegisterDTO {
      * 昵称（选填）。只允许中文、英文、下划线 —— 前端 RegisterView 有同一条正则，
      * 两边口径必须一致，否则会出现"前端放过去、后端 400"。
      */
+    /**
+     * 滑动拼图验证码通过后拿到的一次性 ticket（2026-10-21）。
+     * 由 POST /api/captcha/verify 发放，注册时消费；没有或过期一律拒绝。
+     */
+    @NotBlank(message = "请先完成滑动验证")
+    private String captchaTicket;
+
     @Size(max = 32, message = "昵称最长 32")
     @Pattern(regexp = "^[\\u4e00-\\u9fa5A-Za-z_]*$", message = "昵称只能包含中文、英文、下划线")
     private String realName;
