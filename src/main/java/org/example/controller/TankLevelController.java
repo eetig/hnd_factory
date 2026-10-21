@@ -25,6 +25,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 月底储罐液位记录：查询（免登录）+ 录入维护（需权限）。
@@ -86,6 +88,19 @@ public class TankLevelController {
      * <p>为什么不在前端翻列表拼：列表按日期分页，而候选要**全库**去重 ——
      * 翻页拼不出全量，且每条记录还要自己去重排序。
      */
+    /**
+     * 某个容器最近一次记录的属地 —— 前端"填了容器名称就自动带出属地"用。
+     * 查询类接口，与 /list、/suggestions 同权限（免登录）。
+     */
+    @GetMapping("/last-location")
+    public Result<Map<String, Object>> lastLocation(@RequestParam("tankName") String tankName) {
+        String location = tankLevelRecordService.findLastLocationByTankName(tankName);
+        Map<String, Object> data = new HashMap<>();
+        data.put("tankName", tankName);
+        data.put("location", location);
+        return Result.success(data);
+    }
+
     @GetMapping("/suggestions")
     public Result<TankLevelSuggestionsVO> suggestions() {
         TankLevelSuggestionsVO vo = new TankLevelSuggestionsVO();

@@ -48,6 +48,26 @@ public class TankLevelRecordServiceImpl extends ServiceImpl<TankLevelRecordMappe
     private TankLevelImageService tankLevelImageService;
 
     @Override
+    public String findLastLocationByTankName(String tankName) {
+        String name = trim(tankName);
+        if (!StringUtils.hasText(name)) {
+            return null;
+        }
+
+        QueryWrapper<TankLevelRecord> wrapper = new QueryWrapper<>();
+        // 归一化后比较：现场手打的名字常带多余空格/全角，库里存的可能是"150反应粗品罐"，
+        // 而输入框里是"150 反应粗品罐" —— 用 REPLACE 去掉空格再比，避免查不到
+        wrapper.apply("REPLACE(TRIM(tank_name), ' ', '') = REPLACE({0}, ' ', '')", name);
+        wrapper.isNotNull("location");
+        wrapper.ne("location", "");
+        wrapper.orderByDesc("record_date").orderByDesc("id");
+        wrapper.last("LIMIT 1");
+
+        TankLevelRecord row = getOne(wrapper, false);
+        return row == null ? null : row.getLocation();
+    }
+
+    @Override
     public IPage<TankLevelVO> listPage(TankLevelQueryDTO query) {
         QueryWrapper<TankLevelRecord> wrapper = new QueryWrapper<>();
         LocalDate startDate = query.parsedStartDate();
