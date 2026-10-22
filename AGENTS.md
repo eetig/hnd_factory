@@ -47,6 +47,17 @@
   - 整行可点的 `<tr>` 必须能键盘激活（`tabindex` + 回车/空格）
 - 后端有一条 `FeignClientNameUniquenessTest`：同服务名的多个 `@FeignClient` 必须各有不同 `contextId`
 
+### 包管理器：**前端只用 npm**（2026-10-22 定，两台电脑都适用）
+
+- 锁文件**只有** `hnd_factory_UI/package-lock.json`。**不许**生成或提交 `pnpm-lock.yaml` / `yarn.lock`。
+- 装依赖用 **`npm ci`**（严格按锁文件装）。不要用 `npm install` —— 它会把锁文件往上漂，
+  两台机器就从"同一份源码"漂成"两份依赖树"。
+- 已经用 pnpm 装过的机器：`rm -rf node_modules && npm ci` 重装一次再构建。
+- **为什么写进这里**：`pnpm-lock.yaml` 曾因 `git add -A` 被误提交进一次**纯 CSS 改动**（3283 行），
+  之后两台机器构建出的 `vendor` / `element-plus` chunk **哈希不同**。症状是"线上和本地的包一样长、
+  业务文案全一致，只有文件名不同"—— 排查这个花了很久，而且第一反应会怀疑代码。
+- 推论：**`git add -A` 仍然禁止**（见第一节第 4 条）。多出来的锁文件就是它带进来的。
+
 ## 五、部署（顺序不能乱）
 
 - 顺序：**库 → file-service → hnd_factory → 前端**
