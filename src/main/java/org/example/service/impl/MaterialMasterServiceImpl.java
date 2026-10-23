@@ -10,7 +10,9 @@ import org.example.util.MaterialMatcher;
 import org.example.util.MaterialNameNormalizer;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -31,6 +33,19 @@ public class MaterialMasterServiceImpl extends ServiceImpl<MaterialMasterMapper,
     private static final int DEFAULT_LIMIT = 20;
     private static final int MAX_LIMIT = 50;
 
+    /**
+     * SQL 先筛出来的候选上限（交给 MaterialMatcher 排序的那一批）。
+     *
+     * <p>为什么要有这个数（2026-10-23，变更-159）：主数据从 245 行涨到 30,434 行，
+     * 原来是「全表读进内存再排序」——实测一次 /match 从 ~30ms 涨到 **2.1 秒**，
+     * 而图片解析是**每识别出一行就调一次**，整张单子会卡到不可用。
+     * 200 是「够排序选出前 20」与「不把 Java 侧变成第二个全表扫描」的折中。
+     */
+    private static final int CANDIDATE_LIMIT = 200;
+
+    /** 兜底档（共同字符）的候选上限：只在正常候选为空时才查一次 */
+    private static final int FALLBACK_LIMIT = 50;
+
     @Override
     public MaterialMatchVO match(String name) {
         MaterialMatchVO vo = new MaterialMatchVO();
@@ -39,16 +54,20 @@ public class MaterialMasterServiceImpl extends ServiceImpl<MaterialMasterMapper,
             return vo;
         }
 
-        List<MaterialMaster> all = listEnabled();
-
-        // 只有唯一命中才自动填。多条说明该名称确实对应多个物料（源数据里有 6 组），交人工判断；
-        // 0 条则按约定留空，由前端展示 candidates 供选择。
-        List<MaterialMaster> exact = MaterialMatcher.findExact(all, keyword);
+        // 1) 归一化全等：走 idx_name_norm 等值查询，不再扫全表
+        //    ⚠️ 判"唯一"要按**物料编码**去重，不能按行数：罐类物料一个编码有 8 行
+        //    （主档 + 7 个评估类型），按行数算会永远"不唯一"，导致图片解析永远填不上编码
+        List<MaterialMaster> exact = dedupeByCode(findByNormalizedName(keyword));
         if (exact.size() == 1) {
             vo.setMatched(toVO(exact.get(0)));
         }
 
-        vo.setCandidates(MaterialMatcher.rank(all, keyword, DEFAULT_LIMIT, false).stream()
+        // 2) 候选：SQL 先收窄到 CANDIDATE_LIMIT 条，再由 MaterialMatcher 排序
+        //    （分档规则一行没改，改的只是喂给它的数据量）
+        List<MaterialMaster> candidates = exact.isEmpty()
+                ? dedupeByCode(searchCandidates(keyword, CANDIDATE_LIMIT))
+                : exact;
+        vo.setCandidates(MaterialMatcher.rank(candidates, keyword, DEFAULT_LIMIT, false).stream()
                 .map(this::toVO)
                 .collect(Collectors.toList()));
         return vo;
@@ -61,14 +80,68 @@ public class MaterialMasterServiceImpl extends ServiceImpl<MaterialMasterMapper,
             return List.of();
         }
         int size = (limit == null || limit <= 0) ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
-        return MaterialMatcher.rank(listEnabled(), normalized, size, true).stream()
+        // 候选先由 SQL 收窄；真的一条都没命中时，才用前两个字做一次兜底查询 ——
+        // 对应 MaterialMatcher 第 4 档「共同字符」的语义（它本来就只在 1–3 档全空时才返回）
+        List<MaterialMaster> candidates = searchCandidates(normalized, CANDIDATE_LIMIT);
+        if (candidates.isEmpty()) {
+            candidates = searchCandidates(normalized.substring(0, Math.min(2, normalized.length())), FALLBACK_LIMIT);
+        }
+        return MaterialMatcher.rank(dedupeByCode(candidates), normalized, size, true).stream()
                 .map(this::toVO)
                 .collect(Collectors.toList());
     }
 
-    /** 停用的行保留在库里但不再参与匹配（便于排查「为什么这条查不到」） */
-    private List<MaterialMaster> listEnabled() {
-        return lambdaQuery().eq(MaterialMaster::getEnabled, 1).list();
+    /**
+     * 按物料编码去重，同编码优先保留**主档**那一行（评估类型为空）。
+     *
+     * <p>为什么要在服务层去重：库里一个编码可能有多行（评估类型维度），而
+     * {@link MaterialVO} 只承载"一个物料"的信息（编码/名称/单位）。不去重的话，
+     * 搜「吨桶」会返回 8 条一模一样的候选，20 个候选位被一个物料吃掉 8 个。
+     * 评估类型的价格是详情页的事，不参与列表候选。
+     */
+    // 包级可见 + 静态：便于单测直接钉「8 行同编码只出一个物料」这条规则
+    static List<MaterialMaster> dedupeByCode(List<MaterialMaster> rows) {
+        Map<String, MaterialMaster> byCode = new LinkedHashMap<>();
+        for (MaterialMaster row : rows) {
+            String code = row.getMaterialCode();
+            if (code == null || code.isBlank()) {
+                continue;
+            }
+            MaterialMaster exist = byCode.get(code);
+            if (exist == null || (isMainRow(row) && !isMainRow(exist))) {
+                byCode.put(code, row);
+            }
+        }
+        return new ArrayList<>(byCode.values());
+    }
+
+    static boolean isMainRow(MaterialMaster row) {
+        return row.getValuationType() == null || row.getValuationType().isBlank();
+    }
+
+    /** 归一化名全等：走 idx_name_norm；只认启用行（与 match 的语义一致） */
+    private List<MaterialMaster> findByNormalizedName(String normalized) {
+        return lambdaQuery()
+                .eq(MaterialMaster::getNameNorm, normalized)
+                .eq(MaterialMaster::getEnabled, 1)
+                .list();
+    }
+
+    /**
+     * SQL 侧候选：名称包含 或 编码前缀 命中，只取启用行，最多 {@code limit} 条。
+     *
+     * <p>为什么是"名称包含 + 编码前缀"：名字与编码是用户唯一会输入的两样东西。
+     * 名称走 `LIKE '%kw%'`（30k 行实测 ~0.09ms，见变更-159 的基准），编码走前缀以吃到索引。
+     * <b>不做</b>规格匹配 —— 新主数据里没有规格列，写了也是永远匹配不中。
+     */
+    private List<MaterialMaster> searchCandidates(String keyword, int limit) {
+        return lambdaQuery()
+                .eq(MaterialMaster::getEnabled, 1)
+                .and(w -> w.like(MaterialMaster::getNameNorm, keyword)
+                        .or()
+                        .likeRight(MaterialMaster::getMaterialCode, keyword))
+                .last("LIMIT " + limit)
+                .list();
     }
 
     @Override

@@ -1812,3 +1812,93 @@ CREATE TABLE IF NOT EXISTS `audit_event` (
 INSERT INTO `sys_role` (`role_name`, `role_key`, `description`)
 VALUES ('普通用户', 'member', '自助注册的只读账号；写操作一律回管理员（变更-129）')
 ON DUPLICATE KEY UPDATE `description` = VALUES(`description`);
+-- ===========================================================================
+-- 第 25 步：物料主数据按 SAP 全量重建（变更-159，2026-10-23）
+--
+-- 背景：原 material_master 只有 245 行（从 Excel 抠的一小部分，用于图片解析按名称反查），
+-- 本次换成 SAP 导出的全量 30,434 行（物料清单1022.xlsx），并承载"专门查物料"的页面。
+--
+-- 三条来自真实数据的结论，决定了表结构：
+--   ① **物料编码不唯一**：30,434 行只有 30,392 个编码——罐类物料一个编码有 8 行
+--      （主档 + 7 个评估类型），所以主键是独立自增 id，唯一键是 (编码, 评估类型)；
+--   ② **评估类型是罐体状态/等级**（新/A/B/C/D/翻新/内衬），价格挂在它上面，
+--      7 种状态价各不相同（例 220000445：新 433.63 / B 303.54 / D 108.41 / 内衬 152.5）；
+--   ③ **停用是靠名称标记的**：SAP 没有状态列。实测「禁用」4,799 行、含「禁用」其它写法
+--      211 行、含「作废」351 行、含「勿用」29 行 → 合计 5,390 行停用；
+--      另有 2,136 行名字带「_待禁用」→ 单列一档 status=2（仍可搜到，界面挂黄标）。
+--
+-- 结论分布（导入后核对）：status 1=22,908 / 2=2,136 / 0=5,390；编码 30,392；
+--   有评估类型 42 行；价格>0 7,938 行；采购组空 507；MRP 空 27,265。
+--
+-- ⚠️ 回滚：本机已留 material_master_bak_1023（旧 245 行）。
+--    RENAME TABLE material_master TO material_master_v159,
+--                 material_master_bak_1023 TO material_master;
+-- ===========================================================================
+
+CREATE TABLE `material_master` (
+  `id`                bigint       NOT NULL AUTO_INCREMENT COMMENT '主键（独立自增；物料编码不唯一）',
+  `material_code`     char(9)      NOT NULL COMMENT '物料编码',
+  `valuation_type`    varchar(8)   NOT NULL DEFAULT '' COMMENT '评估类型：空=主档；A/B/C/D/内衬/新/翻新',
+  `material_name`     varchar(255) NOT NULL COMMENT '物料描述',
+  `name_norm`         varchar(255) NOT NULL DEFAULT '' COMMENT '归一化名称（图片解析反查用）',
+  `spec`              varchar(255) DEFAULT NULL COMMENT '规格（SAP 导出无此列，保留兼容旧接口）',
+  `unit`              varchar(16)  DEFAULT NULL COMMENT '基本计量单位',
+  `material_type`     varchar(8)   NOT NULL COMMENT '物料类型 Z001-Z010',
+  `material_group`    varchar(16)  DEFAULT NULL COMMENT '物料组',
+  `product_group`     varchar(16)  DEFAULT NULL COMMENT '产品组（保留兼容）',
+  `procurement_group` varchar(8)   DEFAULT NULL COMMENT '采购组',
+  `mrp_type`          varchar(4)   DEFAULT NULL COMMENT 'MRP 类型',
+  `valuation_class`   varchar(8)   DEFAULT NULL COMMENT '评估类（ValCl）',
+  `price_control`     char(1)      DEFAULT NULL COMMENT '价格控制 V/S',
+  `price`             decimal(18,4) DEFAULT NULL COMMENT '价格（按 price_unit）',
+  `price_unit`        int          NOT NULL DEFAULT 1 COMMENT '价格单位 1/1000',
+  `currency`          char(3)      NOT NULL DEFAULT 'CNY' COMMENT '货币',
+  `plant`             varchar(8)   DEFAULT NULL COMMENT '工厂（当前恒 1503）',
+  `creator`           varchar(16)  DEFAULT NULL COMMENT '创建人',
+  `changed_at`        date         DEFAULT NULL COMMENT '上次更改',
+  `status`            tinyint      NOT NULL DEFAULT 1 COMMENT '1 正常 / 2 待停用 / 0 停用',
+  `enabled`           tinyint      NOT NULL DEFAULT 1 COMMENT '兼容旧接口：status<>0 即 1',
+  `source_sheet`      varchar(64)  DEFAULT NULL COMMENT '来源工作表',
+  `source_row`        int          DEFAULT NULL COMMENT '来源行号',
+  `source_file`       varchar(128) DEFAULT NULL COMMENT '来源文件名',
+  `imported_at`       datetime     DEFAULT NULL COMMENT '导入时间',
+  `create_time`       datetime     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time`       datetime     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_code_vt` (`material_code`, `valuation_type`),
+  KEY `idx_name_norm` (`name_norm`),
+  KEY `idx_code` (`material_code`),
+  KEY `idx_name` (`material_name`(64)),
+  KEY `idx_type_code` (`material_type`, `material_code`),
+  KEY `idx_group` (`material_group`),
+  KEY `idx_status` (`status`),
+  KEY `idx_vt` (`valuation_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='物料主数据（一码 x 评估类型 一行）';
+
+-- 四张字典：界面上的中文名、徽标配色、说明全从这里来，代码里不写 if
+CREATE TABLE `material_type_dict` (
+  `type_code` varchar(8) NOT NULL, `type_name` varchar(32) NOT NULL,
+  `default_mrp` varchar(4) DEFAULT NULL, `default_procurement_group` varchar(8) DEFAULT NULL,
+  `color` varchar(16) DEFAULT NULL, `sort_no` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`type_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='物料类型字典';
+
+CREATE TABLE `procurement_group_dict` (
+  `group_code` varchar(8) NOT NULL, `group_name` varchar(32) NOT NULL,
+  `meaning` varchar(128) DEFAULT NULL, `sort_no` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`group_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采购组字典';
+
+CREATE TABLE `mrp_type_dict` (
+  `mrp_code` varchar(4) NOT NULL, `mrp_label` varchar(16) NOT NULL,
+  `meaning` varchar(128) DEFAULT NULL, `sort_no` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`mrp_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='MRP 类型字典';
+
+CREATE TABLE `material_valuation_type_dict` (
+  `valuation_type` varchar(8) NOT NULL, `label` varchar(16) NOT NULL,
+  `meaning` varchar(128) NOT NULL, `sort_no` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`valuation_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='评估类型字典（罐体状态/等级）';
+
+-- 字典数据见同目录 material-dict-seed.sql（10 + 9 + 4 + 8 行，幂等 INSERT ... ON DUPLICATE KEY UPDATE）

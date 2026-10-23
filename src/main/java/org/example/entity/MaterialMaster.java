@@ -19,7 +19,9 @@ public class MaterialMaster {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String materialCode;     // 物料编码
+    private String valuationType;    // 评估类型：空=主档；A/B/C/D/内衬/新/翻新（2026-10-23 起）
     private String materialName;     // 物料名称（识别结果按此字段反查）
+    private String nameNorm;         // 归一化名称（2026-10-23 起由导入时生成，走索引反查）
     private String spec;             // 规格
     private String unit;             // 单位（查到时自动带出）
     private String materialType;     // 物料类型
