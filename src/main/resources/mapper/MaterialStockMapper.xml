@@ -62,21 +62,36 @@
                  LEFT JOIN (<include refid="firstMasterPerCode"/>) mm
                            ON mm.material_code = s.material_code
 
-        UNION ALL
+        <!--
+          2026-10-23（变更-159）：主数据从 245 行涨到 30,434 行之后，这一整支必须**只在有
+          关键词时**才并进来。否则"浏览"会把 3 万个没有库存的物料全铺进来 —— 实测这条页面的
+          total 从 589 变成 30,392、分页变成 3,040 页，等于把库存查询做成了主数据列表。
 
-        SELECT NULL,
-               NULL,
-               mm.material_code,
-               NULLIF(TRIM(mm.material_name), ''),
-               NULLIF(TRIM(mm.spec), ''),
-               NULL,
-               NULL,
-               NULL,
-               NULL,
-               1
-        FROM (<include refid="firstMasterPerCode"/>) mm
-        WHERE NOT EXISTS (SELECT 1 FROM material_stock s2 WHERE s2.material_code = mm.material_code)
-    </sql>
+          ⚠️ 是"整支"而不是"给 WHERE 加个条件"：只加 AND 的话，关键词为空时分支照样在，
+             结果是 29,8xx 行无库存物料被并进来（第一版就踩了这个坑，实测 total 仍是 30,392）。
+
+          原意是"搜 V150 时，主数据里有、库存汇总里没有的物料也要出现"，所以这道关键词闸门
+          本来就该长在这里（外层 stockFilter 会再筛一次，但那是 3 万行 UNION 之后再 LIKE）。
+        -->
+        <if test="keyword != null and keyword != ''">
+            UNION ALL
+
+            SELECT NULL,
+                   NULL,
+                   mm.material_code,
+                   NULLIF(TRIM(mm.material_name), ''),
+                   NULLIF(TRIM(mm.spec), ''),
+                   NULL,
+                   NULL,
+                   NULL,
+                   NULL,
+                   1
+            FROM (<include refid="firstMasterPerCode"/>) mm
+            WHERE NOT EXISTS (SELECT 1 FROM material_stock s2 WHERE s2.material_code = mm.material_code)
+              AND (mm.material_code LIKE CONCAT('%', #{keyword}, '%')
+                OR mm.material_name LIKE CONCAT('%', #{keyword}, '%')
+                OR mm.spec LIKE CONCAT('%', #{keyword}, '%'))
+        </if>    </sql>
 
     <!--
       筛选条件作用在**合并之后**的派生表 t 上：关键字要能命中「主数据带出来的名称/规格」，
