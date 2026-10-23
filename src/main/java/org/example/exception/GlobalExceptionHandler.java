@@ -155,4 +155,15 @@ public class GlobalExceptionHandler {
         result.setMsg(msg);
         return ResponseEntity.status(status).body(result);
     }
+    /**
+     * 入参/文件内容不合法 → 400，并把原因原样回给前端（2026-10-23，变更-159）。
+     *
+     * <p>物料导入的「缺列」「没有有效数据行」「导入会话已过期」都是这类 —— 原来落到兜底的
+     * 500，前端只能显示「Internal Server Error」，人根本不知道是列名不对还是文件选错了。
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Result<Void>> handleIllegalArgument(IllegalArgumentException e) {
+        log.warn("请求参数不合法：{}", e.getMessage());
+        return ResponseEntity.badRequest().body(Result.fail(e.getMessage()));
+    }
 }
