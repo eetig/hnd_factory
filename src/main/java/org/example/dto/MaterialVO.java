@@ -3,6 +3,7 @@ package org.example.dto;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 /**
  * 物料主数据项。
@@ -31,6 +32,8 @@ public class MaterialVO {
     private Integer priceUnit;          // 1 / 1000
     private String currency;            // CNY
     private String priceControl;        // V / S
+    private LocalDate changedAt;        // 上次更改（SAP 的更改日期；列表默认按它倒序）
+    private String creator;             // 创建人
     /** 该编码的评估类型条数（>0 时前端显示「N 种状态价」） */
     private Integer valuationCount;
 }

@@ -223,7 +223,9 @@ public class MaterialMasterServiceImpl extends ServiceImpl<MaterialMasterMapper,
                     .or()
                     .likeRight(MaterialMaster::getMaterialCode, keyword));
         }
-        wrapper.orderByAsc(MaterialMaster::getMaterialType).orderByAsc(MaterialMaster::getMaterialCode);
+        // 默认按「上次更改」由近到远：主数据的使用场景是「最近改过的先看」，而不是按编码遍历。
+        // 空日期排最后（SAP 里有历史行没有更改日期），同日期再按编码保证顺序稳定。
+        wrapper.last("ORDER BY (changed_at IS NULL) ASC, changed_at DESC, material_code ASC");
 
         Page<MaterialMaster> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
         IPage<MaterialMaster> rows = baseMapper.selectPage(page, wrapper);
@@ -323,6 +325,8 @@ public class MaterialMasterServiceImpl extends ServiceImpl<MaterialMasterMapper,
         vo.setPriceUnit(material.getPriceUnit());
         vo.setCurrency(material.getCurrency());
         vo.setPriceControl(material.getPriceControl());
+        vo.setChangedAt(material.getChangedAt());
+        vo.setCreator(material.getCreator());
         vo.setValuationCount(valuationCount);
         return vo;
     }
