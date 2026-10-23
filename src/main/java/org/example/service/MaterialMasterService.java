@@ -1,6 +1,10 @@
 package org.example.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import org.example.dto.MaterialDetailVO;
+import org.example.dto.MaterialFacetsVO;
 import org.example.dto.MaterialMatchVO;
+import org.example.dto.MaterialQueryDTO;
 import org.example.dto.MaterialVO;
 import org.example.entity.MaterialMaster;
 
@@ -44,4 +48,23 @@ public interface MaterialMasterService {
      * 显示成「没有这个物料」会让人以为主数据缺了它。
      */
     Map<String, MaterialMaster> mapFirstByCode();
+
+    /**
+     * 物料主数据分页列表（2026-10-23，变更-159；物料主数据页用）。
+     *
+     * <p>**一个物料一行**：只查 {@code valuation_type=''} 的主档行（30,392 行 = 30,392 个物料），
+     * 评估类型的 42 行不参与列表 —— 否则罐类物料一个会占 8 行。
+     * 每行带上该编码的评估类型条数，前端据此显示「N 种状态价」。
+     */
+    IPage<MaterialVO> page(MaterialQueryDTO query);
+
+    /**
+     * 物料详情：主档 + 评估类型价格表。
+     *
+     * @return 编码不存在时返回 null（控制器转成「没有这个物料」）
+     */
+    MaterialDetailVO detail(String code);
+
+    /** 左栏导航用的计数（类型分布 + 状态分布 + 总数），与当前筛选无关 */
+    MaterialFacetsVO facets();
 }
