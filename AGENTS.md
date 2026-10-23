@@ -20,6 +20,21 @@
    一个只写"文档"的提交里：东西没丢，但提交信息与内容对不上，以后查历史会被误导。
    提交前先 `git status` 看一眼有没有不属于自己的改动。
 
+## 一·五、要发版？只看一份文档
+
+**`docs/部署手册.md`** 是唯一真源（含顺序铁律、验收清单、回滚、以及十来个真踩过的坑）。
+日常发版就是两条命令：
+
+```powershell
+cd D:\project\hnd_factory;      .\scripts\deploy-api.ps1    # 后端
+cd D:\project\hnd_factory_UI;   .\scripts\deploy-web.ps1    # 前端
+cd D:\project\hnd_factory;      .\scripts\verify-prod.ps1   # 只读体检
+```
+
+- 带库变更时**先**跑 `.\scripts\db-apply.ps1 -Step N`（只跑指定那一步，别整份重跑）。
+- sudo 密码在 `%USERPROFILE%\.hnd-deploy.env`（`HND_SUDO=...`），**不进仓**。
+- 脚本都是 UTF-8 **带 BOM**：Windows PowerShell 5.1 读无 BOM 的 UTF-8 会把中文变乱码、连引号都吃掉。
+- 远端脚本里**不要打中文**：PS 5.1 用本地代码页解码 ssh stdout，必乱码。
 ## 二、待办清单是唯一真源
 
 - 文件：`docs/待办清单.md`（远端可直接看：
