@@ -7,6 +7,7 @@ import org.example.dto.AttendanceDaySaveDTO;
 import org.example.dto.AttendanceMonthVO;
 import org.example.dto.AttendanceSettingVO;
 import org.example.dto.Result;
+import org.example.exception.BusinessException;
 import org.example.service.AttendanceService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -72,7 +73,17 @@ public class AttendanceController {
         return Result.success(null);
     }
 
+    /**
+     * 游客只能用「看得到」这一层，不能取自己的考勤（2026-10-24 使用方口径：
+     * 「游客能看到功能按钮，注册用户能使用」）。
+     *
+     * <p>放在这里而不是靠前端藏按钮：前端藏等于数据公开，后端必须自己拦一道。
+     * 用 Sa-Token 的角色判断（项目里登录时就给了 role，guest 是独立角色）。
+     */
     private Long currentUserId() {
+        if (StpUtil.hasRole("guest")) {
+            throw new BusinessException("该功能需要注册账号后使用");
+        }
         return Long.valueOf(StpUtil.getLoginIdAsString());
     }
 }
