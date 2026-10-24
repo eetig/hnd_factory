@@ -4,9 +4,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.dto.AttendanceDaySaveDTO;
 import org.example.dto.AttendanceDayVO;
 import org.example.dto.AttendanceMonthVO;
+import org.example.dto.AttendanceSettingVO;
 import org.example.entity.AttendanceDay;
+import org.example.entity.AttendanceSetting;
 import org.example.exception.BusinessException;
 import org.example.mapper.AttendanceDayMapper;
+import org.example.mapper.AttendanceSettingMapper;
 import org.example.service.AttendanceService;
 import org.example.util.AttendanceCalendar;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,9 +28,13 @@ import java.util.Map;
 /**
  * 个人考勤台账实现（2026-10-24，变更-171）。
  *
- * <p>核心一件事：**返回整月每一天**。库里存的是"例外"（只存用户真的录过/改过的日子），
- * 其余天用 {@link AttendanceCalendar#defaultType} 补默认值 ——
- * 这样使用方打开就是一份填好的月历，只改有变动的那几天（他的原话要求）。
+ * <h2>两件核心事</h2>
+ * <ol>
+ *   <li><b>首次打开某月自动生成工作日记录</b> —— 使用方要"打开就填好、只改例外"。
+ *       生成时用 {@link #settings} 的默认时间（08:00 / 17:30，午休 12:00-13:30）。</li>
+ *   <li><b>工作日工时扣掉午休</b> —— 08:00→17:30 是 9.5 小时，但他按 8 小时算：
+ *       9.5 − 1.5(午休) = 8。加班日 4 段本身不含午休，直接累加。</li>
+ * </ol>
  */
 @Service
 public class AttendanceServiceImpl implements AttendanceService {
@@ -35,19 +42,18 @@ public class AttendanceServiceImpl implements AttendanceService {
     @Autowired
     private AttendanceDayMapper attendanceDayMapper;
 
+    @Autowired
+    private AttendanceSettingMapper attendanceSettingMapper;
+
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public AttendanceMonthVO month(String month, Long userId) {
         YearMonth ym = parseMonth(month);
-        LocalDate first = ym.atDay(1);
-        LocalDate last = ym.atEndOfMonth();
+        AttendanceSettingVO setting = settings(userId);
 
-        Map<LocalDate, AttendanceDay> saved = new HashMap<>();
-        List<AttendanceDay> rows = attendanceDayMapper.selectList(new LambdaQueryWrapper<AttendanceDay>()
-                .eq(AttendanceDay::getUserId, userId)
-                .between(AttendanceDay::getWorkDate, first, last));
-        for (AttendanceDay row : rows) {
-            saved.put(row.getWorkDate(), row);
-        }
+        Map<LocalDate, AttendanceDay> saved = loadMonthRows(ym, userId);
+        // 首次打开：把该月工作日按默认时间铺好（已经存在的绝不覆盖）
+        autoFill(ym, userId, setting, saved);
 
         List<AttendanceDayVO> days = new ArrayList<>(ym.lengthOfMonth());
         AttendanceMonthVO vo = new AttendanceMonthVO();
@@ -56,6 +62,7 @@ public class AttendanceServiceImpl implements AttendanceService {
         int totalMinutes = 0;
         int missCount = 0;
         int incompleteDays = 0;
+        int lunch = lunchMinutes(setting);
 
         for (int d = 1; d <= ym.lengthOfMonth(); d++) {
             LocalDate date = ym.atDay(d);
@@ -91,11 +98,10 @@ public class AttendanceServiceImpl implements AttendanceService {
                 int miss = countMiss(day);
                 int have = countTimes(day);
                 missCount += miss;
-                // 缺段：该录的段数 > 实际录的段数 + 标忘的段数
                 if (have + miss < needSeg) {
                     incompleteDays++;
                 } else {
-                    totalMinutes += minutesOf(day);
+                    totalMinutes += minutesOf(day, lunch);
                 }
             }
 
@@ -106,6 +112,7 @@ public class AttendanceServiceImpl implements AttendanceService {
         vo.setTotalMinutes(totalMinutes);
         vo.setMissCount(missCount);
         vo.setIncompleteDays(incompleteDays);
+        vo.setSettings(setting);
         vo.setWorkDays((int) days.stream()
                 .filter(it -> AttendanceCalendar.TYPE_WORK.equals(it.getDayType()))
                 .filter(it -> countTimes(it) + countMiss(it) >= AttendanceCalendar.segments(it.getDayType()))
@@ -173,7 +180,113 @@ public class AttendanceServiceImpl implements AttendanceService {
                 .eq(AttendanceDay::getWorkDate, workDate));
     }
 
-    // ---------------------------------------------------------------- 工具
+    @Override
+    public AttendanceSettingVO settings(Long userId) {
+        AttendanceSetting row = attendanceSettingMapper.selectOne(new LambdaQueryWrapper<AttendanceSetting>()
+                .eq(AttendanceSetting::getUserId, userId));
+        if (row == null) {
+            return AttendanceSettingVO.defaults();
+        }
+        AttendanceSettingVO vo = new AttendanceSettingVO();
+        vo.setWorkStart(row.getWorkStart() == null ? LocalTime.of(8, 0) : row.getWorkStart());
+        vo.setWorkEnd(row.getWorkEnd() == null ? LocalTime.of(17, 30) : row.getWorkEnd());
+        vo.setLunchStart(row.getLunchStart() == null ? LocalTime.of(12, 0) : row.getLunchStart());
+        vo.setLunchEnd(row.getLunchEnd() == null ? LocalTime.of(13, 30) : row.getLunchEnd());
+        vo.setStandardMinutes(standardMinutes(vo));
+        return vo;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void saveSettings(AttendanceSettingVO vo, Long userId) {
+        if (vo == null || vo.getWorkStart() == null || vo.getWorkEnd() == null) {
+            throw new BusinessException("上班与下班时间不能为空");
+        }
+        if (!vo.getWorkStart().isBefore(vo.getWorkEnd())) {
+            throw new BusinessException("下班时间必须晚于上班时间");
+        }
+        if (vo.getLunchStart() != null && vo.getLunchEnd() != null
+                && !vo.getLunchStart().isBefore(vo.getLunchEnd())) {
+            throw new BusinessException("午休结束必须晚于午休开始");
+        }
+
+        AttendanceSetting row = attendanceSettingMapper.selectOne(new LambdaQueryWrapper<AttendanceSetting>()
+                .eq(AttendanceSetting::getUserId, userId));
+        boolean insert = row == null;
+        if (insert) {
+            row = new AttendanceSetting();
+            row.setUserId(userId);
+        }
+        row.setWorkStart(vo.getWorkStart());
+        row.setWorkEnd(vo.getWorkEnd());
+        row.setLunchStart(vo.getLunchStart());
+        row.setLunchEnd(vo.getLunchEnd());
+        if (insert) {
+            attendanceSettingMapper.insert(row);
+        } else {
+            attendanceSettingMapper.updateById(row);
+        }
+    }
+
+    // ---------------------------------------------------------------- 内部
+
+    private Map<LocalDate, AttendanceDay> loadMonthRows(YearMonth ym, Long userId) {
+        Map<LocalDate, AttendanceDay> saved = new HashMap<>();
+        List<AttendanceDay> rows = attendanceDayMapper.selectList(new LambdaQueryWrapper<AttendanceDay>()
+                .eq(AttendanceDay::getUserId, userId)
+                .between(AttendanceDay::getWorkDate, ym.atDay(1), ym.atEndOfMonth()));
+        for (AttendanceDay row : rows) {
+            saved.put(row.getWorkDate(), row);
+        }
+        return saved;
+    }
+
+    /**
+     * 首次打开某月：把该月**默认工作日**按标准时间铺成已打卡记录。
+     *
+     * <p>只处理库里还没有的日期（不覆盖任何人工修改）；休息日不落库（它本来就是"不录"）。
+     */
+    private void autoFill(YearMonth ym, Long userId, AttendanceSettingVO setting, Map<LocalDate, AttendanceDay> saved) {
+        for (int d = 1; d <= ym.lengthOfMonth(); d++) {
+            LocalDate date = ym.atDay(d);
+            if (saved.containsKey(date)) {
+                continue;
+            }
+            if (!AttendanceCalendar.TYPE_WORK.equals(AttendanceCalendar.defaultType(date))) {
+                continue;
+            }
+            AttendanceDay row = new AttendanceDay();
+            row.setUserId(userId);
+            row.setWorkDate(date);
+            row.setDayType(AttendanceCalendar.TYPE_WORK);
+            row.setAmIn(setting.getWorkStart());
+            row.setAmOut(setting.getWorkEnd());
+            row.setMissAmIn(false);
+            row.setMissAmOut(false);
+            row.setMissPmIn(false);
+            row.setMissPmOut(false);
+            row.setNote("");
+            attendanceDayMapper.insert(row);
+            saved.put(date, row);
+        }
+    }
+
+    private static int lunchMinutes(AttendanceSettingVO setting) {
+        LocalTime from = setting.getLunchStart();
+        LocalTime to = setting.getLunchEnd();
+        if (from == null || to == null) {
+            return 0;
+        }
+        long minutes = Duration.between(from, to).toMinutes();
+        return minutes > 0 ? (int) minutes : 0;
+    }
+
+    /** 一个标准工作日的有效工时：下班−上班−午休 */
+    private static int standardMinutes(AttendanceSettingVO setting) {
+        long gross = Duration.between(setting.getWorkStart(), setting.getWorkEnd()).toMinutes();
+        int net = (int) gross - lunchMinutes(setting);
+        return Math.max(net, 0);
+    }
 
     private static YearMonth parseMonth(String month) {
         if (month == null || month.isBlank()) {
@@ -227,17 +340,19 @@ public class AttendanceServiceImpl implements AttendanceService {
     /**
      * 一天的分钟数。
      *
-     * <p>工作日 = amOut − amIn；加班日 = (amOut − amIn) + (pmOut − pmIn)。
-     * 任一段缺或为负（录反了）就**不计该段**，宁少不多 —— 和人事对账时"少算"会被发现并核对，
-     * "多算"会变成争议。
+     * <p>工作日 = (amOut − amIn) − **午休**（他的账是 08:00→17:30 记 8 小时）；
+     * 加班日 = (amOut − amIn) + (pmOut − pmIn)，四段本身不含午休，不再扣。
+     * 任一段缺或为负（录反了）就不计该段 —— 宁少不多：少算会被对账发现，多算会变争议。
      */
-    private static int minutesOf(AttendanceDayVO day) {
-        int total = 0;
-        total += span(day.getAmIn(), day.getAmOut());
+    private static int minutesOf(AttendanceDayVO day, int lunch) {
         if (AttendanceCalendar.TYPE_OVERTIME.equals(day.getDayType())) {
-            total += span(day.getPmIn(), day.getPmOut());
+            return span(day.getAmIn(), day.getAmOut()) + span(day.getPmIn(), day.getPmOut());
         }
-        return total;
+        int gross = span(day.getAmIn(), day.getAmOut());
+        if (gross <= 0) {
+            return 0;
+        }
+        return Math.max(gross - lunch, 0);
     }
 
     private static int span(LocalTime from, LocalTime to) {

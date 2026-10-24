@@ -5,6 +5,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import jakarta.validation.Valid;
 import org.example.dto.AttendanceDaySaveDTO;
 import org.example.dto.AttendanceMonthVO;
+import org.example.dto.AttendanceSettingVO;
 import org.example.dto.Result;
 import org.example.service.AttendanceService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,6 +55,20 @@ public class AttendanceController {
     @SaCheckPermission("attendance:edit")
     public Result<Void> remove(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         attendanceService.remove(date, currentUserId());
+        return Result.success(null);
+    }
+
+    /** 默认时间（上班/下班/午休）；没设置过返回 8:00 / 17:30、午休 12:00-13:30 */
+    @GetMapping("/settings")
+    public Result<AttendanceSettingVO> settings() {
+        return Result.success(attendanceService.settings(currentUserId()));
+    }
+
+    /** 改默认时间：只影响之后新生成的月份，已生成的不动 */
+    @PostMapping("/settings")
+    @SaCheckPermission("attendance:edit")
+    public Result<Void> saveSettings(@RequestBody AttendanceSettingVO vo) {
+        attendanceService.saveSettings(vo, currentUserId());
         return Result.success(null);
     }
 
