@@ -1902,3 +1902,38 @@ CREATE TABLE `material_valuation_type_dict` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='评估类型字典（罐体状态/等级）';
 
 -- 字典数据见同目录 material-dict-seed.sql（10 + 9 + 4 + 8 行，幂等 INSERT ... ON DUPLICATE KEY UPDATE）
+
+
+-- ---------------------------------------------------------------------------
+-- 个人考勤台账（变更-171，2026-10-24）
+--
+-- 用途：使用方在手机上**事后录入**自己的打卡时间，和人事对账（他不在这打卡，
+-- 所以这是台账不是流水）。一人一天一条，四个时间列覆盖两种形态：
+--   工作日 work      → am_in / am_out 两段（上班 / 下班）
+--   休息日加班 overtime → am_in / am_out / pm_in / pm_out 四段
+--   休息 rest        → 不录时间
+--   调休 comp        → 不录时间（工作日被安排休息）
+-- 忘打卡按**每段独立**记（miss_*），迟到早退不单独算（使用方口径：记为忘打卡）。
+-- 唯一键 (user_id, work_date)：同一天再保存走 upsert，不会变两条。
+-- 不建 deleted：删掉就是回到"默认值"，月历里那天会按规则重算。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `attendance_day` (
+  `id`          bigint      NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+  `user_id`     bigint      NOT NULL COMMENT '归属用户（Sa-Token loginId；目前只记自己，预留代录）',
+  `work_date`   date        NOT NULL COMMENT '日期',
+  `day_type`    varchar(16) NOT NULL DEFAULT 'work' COMMENT 'work 工作日 / overtime 休息日加班 / rest 休息 / comp 调休',
+  `am_in`       time        DEFAULT NULL COMMENT '上班（工作日）/ 上午上班（加班）',
+  `am_out`      time        DEFAULT NULL COMMENT '下班（工作日）/ 午休离开（加班）',
+  `pm_in`       time        DEFAULT NULL COMMENT '下午上班（仅加班）',
+  `pm_out`      time        DEFAULT NULL COMMENT '下午下班（仅加班）',
+  `miss_am_in`  tinyint(1)  NOT NULL DEFAULT 0 COMMENT '该段忘打卡',
+  `miss_am_out` tinyint(1)  NOT NULL DEFAULT 0 COMMENT '该段忘打卡',
+  `miss_pm_in`  tinyint(1)  NOT NULL DEFAULT 0 COMMENT '该段忘打卡',
+  `miss_pm_out` tinyint(1)  NOT NULL DEFAULT 0 COMMENT '该段忘打卡',
+  `note`        varchar(255) NOT NULL DEFAULT '' COMMENT '备注（请假事由等）',
+  `create_time` datetime    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_date` (`user_id`, `work_date`),
+  KEY `idx_work_date` (`work_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='个人考勤台账（事后录入，用于与人事对账）';
