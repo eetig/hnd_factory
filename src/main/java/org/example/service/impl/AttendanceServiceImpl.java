@@ -311,6 +311,34 @@ public class AttendanceServiceImpl implements AttendanceService {
             attendanceDayMapper.insert(row);
             saved.put(date, row);
         }
+
+        /*
+         * 「当天默认填写」（2026-10-24 使用方要求）。
+         *
+         * 上面的循环只铺**默认工作日**，于是今天若是周末就没有行 —— 他打开看不到今天，
+         * 想记"我今天加班/值班"还要先点空白格。这里保证**今天一定有一行**，
+         * 类型取今天的默认类型（工作日 = work + 标准时间；休息 = rest），
+         * 他点一下就能改成加班（时间会自动补齐）或加值班。
+         */
+        if (YearMonth.from(today).equals(ym) && !saved.containsKey(today)) {
+            String todayType = AttendanceCalendar.defaultType(today);
+            AttendanceDay todayRow = new AttendanceDay();
+            todayRow.setUserId(userId);
+            todayRow.setWorkDate(today);
+            todayRow.setDayType(todayType);
+            if (AttendanceCalendar.TYPE_WORK.equals(todayType)) {
+                todayRow.setAmIn(setting.getWorkStart());
+                todayRow.setAmOut(setting.getWorkEnd());
+            }
+            todayRow.setMissAmIn(false);
+            todayRow.setMissAmOut(false);
+            todayRow.setMissPmIn(false);
+            todayRow.setMissPmOut(false);
+            todayRow.setHasDuty(false);
+            todayRow.setNote("");
+            attendanceDayMapper.insert(todayRow);
+            saved.put(today, todayRow);
+        }
     }
 
     private static int lunchMinutes(AttendanceSettingVO setting) {
