@@ -33,5 +33,8 @@ public class AttendanceDaySaveDTO {
     private Boolean missPmIn;
     private Boolean missPmOut;
 
+    /** 当天是否值班（与白班/加班可并存） */
+    private Boolean hasDuty;
+
     private String note;
 }

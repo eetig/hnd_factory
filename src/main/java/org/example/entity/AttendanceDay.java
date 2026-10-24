@@ -55,6 +55,15 @@ public class AttendanceDay {
     private Boolean missPmIn;
     private Boolean missPmOut;
 
+    /**
+     * 当天是否值班（夜班 20:00-次日 08:00）。
+     *
+     * <p>使用方 2026-10-24：「化工厂有值班要求……按次数算，值一次班 50 块钱」，
+     * 并且值班可以和当天的白班/加班**同时存在**（白天上班、晚上再值班），
+     * 所以它是同一条记录上的独立标记，不是第五种日期类型，也不记小时。
+     */
+    private Boolean hasDuty;
+
     private String note;
 
     private LocalDateTime createTime;

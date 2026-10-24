@@ -41,6 +41,9 @@ public class AttendanceSetting {
     /** 午休结束 */
     private LocalTime lunchEnd;
 
+    /** 值班单价（元/次），使用方口径：值一次班 50 元 */
+    private java.math.BigDecimal dutyRate;
+
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

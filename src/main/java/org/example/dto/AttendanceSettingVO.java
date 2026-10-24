@@ -18,6 +18,9 @@ public class AttendanceSettingVO {
     private LocalTime lunchStart;
     private LocalTime lunchEnd;
 
+    /** 值班单价（元/次），默认 50 */
+    private java.math.BigDecimal dutyRate;
+
     /** 一个标准工作日的有效工时（分钟）：下班−上班−午休，默认 480 */
     private int standardMinutes;
 
@@ -27,6 +30,7 @@ public class AttendanceSettingVO {
         vo.setWorkEnd(LocalTime.of(17, 30));
         vo.setLunchStart(LocalTime.of(12, 0));
         vo.setLunchEnd(LocalTime.of(13, 30));
+        vo.setDutyRate(new java.math.BigDecimal("50.00"));
         vo.setStandardMinutes(480);
         return vo;
     }

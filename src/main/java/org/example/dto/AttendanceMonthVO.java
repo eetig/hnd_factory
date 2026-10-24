@@ -39,6 +39,12 @@ public class AttendanceMonthVO {
 
     private int incompleteDays;
 
+    /** 值班次数 */
+    private int dutyCount;
+
+    /** 值班费合计（元）= dutyCount × dutyRate */
+    private java.math.BigDecimal dutyAmount;
+
     /** 当前生效的默认时间（手机端「默认时间」弹层直接用它，省一次请求） */
     private AttendanceSettingVO settings;
 }

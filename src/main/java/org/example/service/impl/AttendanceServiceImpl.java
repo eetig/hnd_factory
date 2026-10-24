@@ -77,6 +77,7 @@ public class AttendanceServiceImpl implements AttendanceService {
                 day.setMissAmOut(false);
                 day.setMissPmIn(false);
                 day.setMissPmOut(false);
+                day.setHasDuty(false);
             } else {
                 day.setDayType(normalizeType(row.getDayType()));
                 day.setPersisted(true);
@@ -88,6 +89,7 @@ public class AttendanceServiceImpl implements AttendanceService {
                 day.setMissAmOut(Boolean.TRUE.equals(row.getMissAmOut()));
                 day.setMissPmIn(Boolean.TRUE.equals(row.getMissPmIn()));
                 day.setMissPmOut(Boolean.TRUE.equals(row.getMissPmOut()));
+                day.setHasDuty(Boolean.TRUE.equals(row.getHasDuty()));
                 day.setNote(row.getNote());
             }
 
@@ -113,14 +115,24 @@ public class AttendanceServiceImpl implements AttendanceService {
         vo.setMissCount(missCount);
         vo.setIncompleteDays(incompleteDays);
         vo.setSettings(setting);
+
+        int dutyCount = (int) days.stream().filter(it -> Boolean.TRUE.equals(it.getHasDuty())).count();
+        vo.setDutyCount(dutyCount);
+        vo.setDutyAmount(setting.getDutyRate() == null
+                ? java.math.BigDecimal.ZERO
+                : setting.getDutyRate().multiply(java.math.BigDecimal.valueOf(dutyCount)));
         vo.setWorkDays((int) days.stream()
                 .filter(it -> AttendanceCalendar.TYPE_WORK.equals(it.getDayType()))
                 .filter(it -> countTimes(it) + countMiss(it) >= AttendanceCalendar.segments(it.getDayType()))
                 .filter(it -> countTimes(it) > 0)
                 .count());
+        /*
+         * 加班天数按**类型**算，不再要求"有时间"（2026-10-24 修）。
+         * 起初写成"有时间才算"，于是使用方把三天改成加班、时间还空着时，
+         * 看板显示"加班 0"—— 和眼睛看到的三个「加班」格子矛盾。
+         */
         vo.setOvertimeDays((int) days.stream()
                 .filter(it -> AttendanceCalendar.TYPE_OVERTIME.equals(it.getDayType()))
-                .filter(it -> countTimes(it) > 0)
                 .count());
         vo.setRestDays((int) days.stream()
                 .filter(it -> AttendanceCalendar.TYPE_REST.equals(it.getDayType()))
@@ -161,6 +173,21 @@ public class AttendanceServiceImpl implements AttendanceService {
         row.setMissAmOut(Boolean.TRUE.equals(dto.getMissAmOut()));
         row.setMissPmIn(Boolean.TRUE.equals(dto.getMissPmIn()));
         row.setMissPmOut(Boolean.TRUE.equals(dto.getMissPmOut()));
+        /*
+         * 改成「休息日加班」但没填时间 ⇒ 按默认作息补齐 4 段
+         * （使用方：加班日就是 08:00-12:00、13:30-17:30，和平常一样）。
+         * 之前不补，于是"类型=加班、时间=空"，统计里既算缺段又不计加班，矛盾。
+         */
+        if (AttendanceCalendar.TYPE_OVERTIME.equals(type)
+                && dto.getAmIn() == null && dto.getAmOut() == null
+                && dto.getPmIn() == null && dto.getPmOut() == null) {
+            AttendanceSettingVO def = settings(userId);
+            row.setAmIn(def.getWorkStart());
+            row.setAmOut(def.getLunchStart());
+            row.setPmIn(def.getLunchEnd());
+            row.setPmOut(def.getWorkEnd());
+        }
+        row.setHasDuty(Boolean.TRUE.equals(dto.getHasDuty()));
         row.setNote(trim(dto.getNote()));
 
         if (existing == null) {
@@ -192,6 +219,7 @@ public class AttendanceServiceImpl implements AttendanceService {
         vo.setWorkEnd(row.getWorkEnd() == null ? LocalTime.of(17, 30) : row.getWorkEnd());
         vo.setLunchStart(row.getLunchStart() == null ? LocalTime.of(12, 0) : row.getLunchStart());
         vo.setLunchEnd(row.getLunchEnd() == null ? LocalTime.of(13, 30) : row.getLunchEnd());
+        vo.setDutyRate(row.getDutyRate() == null ? new java.math.BigDecimal("50.00") : row.getDutyRate());
         vo.setStandardMinutes(standardMinutes(vo));
         return vo;
     }
@@ -221,6 +249,11 @@ public class AttendanceServiceImpl implements AttendanceService {
         row.setWorkEnd(vo.getWorkEnd());
         row.setLunchStart(vo.getLunchStart());
         row.setLunchEnd(vo.getLunchEnd());
+        if (vo.getDutyRate() != null && vo.getDutyRate().compareTo(java.math.BigDecimal.ZERO) >= 0) {
+            row.setDutyRate(vo.getDutyRate());
+        } else if (insert) {
+            row.setDutyRate(new java.math.BigDecimal("50.00"));
+        }
         if (insert) {
             attendanceSettingMapper.insert(row);
         } else {
@@ -247,8 +280,16 @@ public class AttendanceServiceImpl implements AttendanceService {
      * <p>只处理库里还没有的日期（不覆盖任何人工修改）；休息日不落库（它本来就是"不录"）。
      */
     private void autoFill(YearMonth ym, Long userId, AttendanceSettingVO setting, Map<LocalDate, AttendanceDay> saved) {
+        /*
+         * 只填到**今天**（2026-10-24 使用方要求：「目前是 10 月 24 日，所以只默认填写到 24」）。
+         * 理由：把 25 号以后也按"已正常打卡"填上，等于替他签了还没发生的考勤。
+         */
+        LocalDate today = LocalDate.now();
         for (int d = 1; d <= ym.lengthOfMonth(); d++) {
             LocalDate date = ym.atDay(d);
+            if (date.isAfter(today)) {
+                continue;
+            }
             if (saved.containsKey(date)) {
                 continue;
             }
@@ -265,6 +306,7 @@ public class AttendanceServiceImpl implements AttendanceService {
             row.setMissAmOut(false);
             row.setMissPmIn(false);
             row.setMissPmOut(false);
+            row.setHasDuty(false);
             row.setNote("");
             attendanceDayMapper.insert(row);
             saved.put(date, row);
