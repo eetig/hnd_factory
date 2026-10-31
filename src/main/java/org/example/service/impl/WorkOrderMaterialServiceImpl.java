@@ -148,4 +148,54 @@ public class WorkOrderMaterialServiceImpl implements WorkOrderMaterialService {
             this.unit = unit;
         }
     }
+    @Override
+    public List<org.example.dto.MaterialIssueSummaryVO> issueSummaryByMaterial(
+            java.time.LocalDate startDate, java.time.LocalDate endDate) {
+        LambdaQueryWrapper<MaterialMovement> wrapper = new LambdaQueryWrapper<MaterialMovement>()
+                .in(MaterialMovement::getMovementType, List.of(TYPE_ISSUE, TYPE_REVERSE));
+        if (startDate != null) {
+            wrapper.ge(MaterialMovement::getPostingDate, startDate);
+        }
+        if (endDate != null) {
+            wrapper.le(MaterialMovement::getPostingDate, endDate);
+        }
+        List<MaterialMovement> rows = materialMovementMapper.selectList(wrapper);
+
+        // 物料编码 → 累加（口径与按工单一致：261 负数 + 262 正数，最后取反）
+        Map<String, Acc> byCode = new LinkedHashMap<>();
+        for (MaterialMovement row : rows) {
+            String code = trim(row.getMaterialCode());
+            if (code.isEmpty()) {
+                continue;
+            }
+            Acc acc = byCode.computeIfAbsent(code, k -> new Acc(row.getMaterialDesc(), row.getUnit()));
+            BigDecimal qty = row.getQuantity() == null ? BigDecimal.ZERO : row.getQuantity();
+            acc.raw = acc.raw.add(qty);
+            if (TYPE_ISSUE.equals(trim(row.getMovementType()))) {
+                acc.issueRows++;
+            } else {
+                acc.reversed = true;
+            }
+        }
+
+        List<org.example.dto.MaterialIssueSummaryVO> out = new ArrayList<>();
+        for (Map.Entry<String, Acc> e : byCode.entrySet()) {
+            Acc acc = e.getValue();
+            BigDecimal qty = acc.raw.negate();
+            // 净额为零的物料不列（正负刚好抵掉，列出来只会让表变长）
+            if (qty.compareTo(BigDecimal.ZERO) == 0) {
+                continue;
+            }
+            org.example.dto.MaterialIssueSummaryVO vo = new org.example.dto.MaterialIssueSummaryVO();
+            vo.setMaterialCode(e.getKey());
+            vo.setMaterialDesc(acc.desc);
+            vo.setQty(qty);
+            vo.setUnit(acc.unit);
+            vo.setIssueRows(acc.issueRows);
+            out.add(vo);
+        }
+        out.sort((a, b) -> b.getQty().compareTo(a.getQty()));
+        return out;
+    }
+
 }

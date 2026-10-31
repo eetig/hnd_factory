@@ -19,4 +19,13 @@ public interface WorkOrderMaterialService {
 
     /** 方便测试/单查 */
     List<WorkOrderMaterialVO> list(Collection<String> orderNos);
+    /**
+     * 按**物料**汇总净投料（原辅料核算页用，2026-10-31 变更-172 续）。
+     *
+     * @param startDate 过账日期起（含），可空
+     * @param endDate   过账日期止（含），可空
+     */
+    java.util.List<org.example.dto.MaterialIssueSummaryVO> issueSummaryByMaterial(
+            java.time.LocalDate startDate, java.time.LocalDate endDate);
+
 }
