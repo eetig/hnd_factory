@@ -17,6 +17,8 @@ import org.example.dto.WorkOrderListVO;
 import org.example.dto.WorkOrderQueryDTO;
 import org.example.dto.WorkOrderSaveDTO;
 import org.example.service.WorkOrderService;
+import org.example.service.WorkOrderMaterialService;
+import org.example.dto.WorkOrderMaterialVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,6 +35,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/work-order")
 public class WorkOrderController {
+
+    @Autowired
+    private WorkOrderMaterialService workOrderMaterialService;
 
     @Autowired
     private WorkOrderService workOrderService;
@@ -114,4 +119,32 @@ public class WorkOrderController {
     public ExcelResult<WorkOrderDetailVO> detail(@RequestParam("id") Long id) {
         return workOrderService.getWorkOrderDetail(id);
     }
+    /**
+     * 批量查工单的投料情况（2026-10-31，变更-172）。
+     *
+     * <p>弹层一次要展示多张工单，所以做成批量：`?orderNos=1000232951,1000232560`。
+     * 口径见 {@link WorkOrderMaterialVO}：只算 261 投料与 262 冲销、相抵后取正、
+     * 按物料汇总。数据源是货物移动凭证（领料单里没有工单号，关联不上）。
+     *
+     * <p>返回 Map：工单号 → 投料。**没有任何投料记录的工单不会出现在 Map 里**，
+     * 前端据此显示「—」，而不是显示 0（0 会让人以为"投了但量是零"）。
+     */
+    @GetMapping("/materials")
+    public Result<java.util.Map<String, WorkOrderMaterialVO>> materials(
+            @RequestParam(required = false) String orderNos) {
+        java.util.List<String> list = new java.util.ArrayList<>();
+        if (orderNos != null && !orderNos.isBlank()) {
+            for (String part : orderNos.split(",")) {
+                if (!part.isBlank()) {
+                    list.add(part.trim());
+                }
+            }
+        }
+        // 一次最多 200 张：弹层一页 20 张、最多拉 10 页，超出的部分本来也不显示
+        if (list.size() > 200) {
+            list = list.subList(0, 200);
+        }
+        return Result.success(workOrderMaterialService.byOrderNos(list));
+    }
+
 }
