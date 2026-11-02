@@ -105,7 +105,7 @@ public class AttendanceServiceImpl implements AttendanceService {
                 if (have + miss < needSeg) {
                     incompleteDays++;
                 } else {
-                    totalMinutes += minutesOf(day, lunch);
+                    totalMinutes += minutesOf(day, setting);
                 }
             }
 
@@ -420,7 +420,7 @@ public class AttendanceServiceImpl implements AttendanceService {
      * 加班日 = (amOut − amIn) + (pmOut − pmIn)，四段本身不含午休，不再扣。
      * 任一段缺或为负（录反了）就不计该段 —— 宁少不多：少算会被对账发现，多算会变争议。
      */
-    private static int minutesOf(AttendanceDayVO day, int lunch) {
+    private static int minutesOf(AttendanceDayVO day, AttendanceSettingVO setting) {
         if (AttendanceCalendar.TYPE_OVERTIME.equals(day.getDayType())) {
             return span(day.getAmIn(), day.getAmOut()) + span(day.getPmIn(), day.getPmOut());
         }
@@ -428,7 +428,26 @@ public class AttendanceServiceImpl implements AttendanceService {
         if (gross <= 0) {
             return 0;
         }
+        /*
+         * 午休只扣"真的重叠"的那部分（2026-11-02，与 App 端 lunchOverlap 同口径）。
+         * 原来无条件减整段 1.5h ⇒ 08:00~12:00 被算成 2.5h（使用方：「应该是 4 个小时啊」）。
+         *   08:00~12:00 → 重叠 0     → 4h
+         *   08:00~17:30 → 重叠 1.5h  → 8h
+         *   08:00~13:00 → 重叠 1h    → 4h
+         */
+        int lunch = lunchOverlap(day.getAmIn(), day.getAmOut(),
+                setting.getLunchStart(), setting.getLunchEnd());
         return Math.max(gross - lunch, 0);
+    }
+
+    /** 上下班区间与午休的重叠分钟数；任一端缺失返回 0（少扣好过多扣） */
+    private static int lunchOverlap(LocalTime start, LocalTime end, LocalTime lunchStart, LocalTime lunchEnd) {
+        if (start == null || end == null || lunchStart == null || lunchEnd == null) {
+            return 0;
+        }
+        LocalTime from = start.isAfter(lunchStart) ? start : lunchStart;
+        LocalTime to = end.isBefore(lunchEnd) ? end : lunchEnd;
+        return span(from, to);
     }
 
     private static int span(LocalTime from, LocalTime to) {
