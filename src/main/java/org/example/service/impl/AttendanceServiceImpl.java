@@ -176,11 +176,15 @@ public class AttendanceServiceImpl implements AttendanceService {
         row.setMissPmIn(Boolean.TRUE.equals(dto.getMissPmIn()));
         row.setMissPmOut(Boolean.TRUE.equals(dto.getMissPmOut()));
         /*
-         * 改成「休息日加班」但没填时间 ⇒ 按默认作息补齐 4 段
+         * 改成「休息日加班」或「工作日」但没填时间 ⇒ 按默认作息补齐 4 段
          * （使用方：加班日就是 08:00-12:00、13:30-17:30，和平常一样）。
-         * 之前不补，于是"类型=加班、时间=空"，统计里既算缺段又不计加班，矛盾。
+         *
+         * 2026-11-02 扩到 work：使用方的真实操作是"周六我上班了 ⇒ 把那天改成工作日"，
+         * 结果存成 type=work + 四段全空（线上实测 uid=4 / 2026-10-17），
+         * 格子上没有 8h、还报"缺段 1 天"，他还以为数据没存上。
          */
-        if (AttendanceCalendar.TYPE_OVERTIME.equals(type)
+        if ((AttendanceCalendar.TYPE_OVERTIME.equals(type)
+                || AttendanceCalendar.TYPE_WORK.equals(type))
                 && dto.getAmIn() == null && dto.getAmOut() == null
                 && dto.getPmIn() == null && dto.getPmOut() == null) {
             AttendanceSettingVO def = settings(userId);
