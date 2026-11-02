@@ -72,6 +72,8 @@ public class AttendanceServiceImpl implements AttendanceService {
             day.setWorkDate(date);
             if (row == null) {
                 day.setDayType(AttendanceCalendar.defaultType(date));
+        // 节日名（2026-11-02）：休息日要能看出是哪个节，周末不在其中
+        day.setHolidayName(AttendanceCalendar.holidayName(day.getWorkDate()));
                 day.setPersisted(false);
                 day.setMissAmIn(false);
                 day.setMissAmOut(false);

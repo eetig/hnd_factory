@@ -74,6 +74,49 @@ public final class AttendanceCalendar {
             ));
 
     /**
+     * 2026 年各节假日的**名字**（2026-11-02 使用方：休息日要标出是哪个节）。
+     *
+     * <p>「10.3、10.4 都是国庆假期，所以把节日也要体现出来」—— 只写"休息"看不出是
+     * 周末还是法定节假日，而对账时两者的意义完全不同（节假日加班按 3 倍算）。
+     *
+     * <p>名字控制在一行放得下的长度（手机格子约 112rpx，18rpx 字号 ≈ 4 个字），
+     * 所以「劳动节」写成「劳动」而不是全称。
+     */
+    private static final Map<Integer, Map<LocalDate, String>> HOLIDAY_NAMES = Map.of(
+            2026, holidayNames(
+                    "元旦", "2026-01-01", "2026-01-03",
+                    "春节", "2026-02-15", "2026-02-23",
+                    "清明", "2026-04-04", "2026-04-06",
+                    "劳动", "2026-05-01", "2026-05-05",
+                    "端午", "2026-06-19", "2026-06-21",
+                    "中秋", "2026-09-25", "2026-09-27",
+                    "国庆", "2026-10-01", "2026-10-07"
+            ));
+
+    /**
+     * 某天是不是法定节假日；是则返回节日名（元旦 / 春节 / 清明 / 劳动 / 端午 / 中秋 / 国庆），
+     * 否则返回 {@code null}。周末休息日也返回 null —— 那是"周末"不是"节日"。
+     */
+    public static String holidayName(LocalDate date) {
+        Map<LocalDate, String> names = HOLIDAY_NAMES.getOrDefault(date.getYear(), Map.of());
+        return names.get(date);
+    }
+
+    /** 把「名字 + 起止」的四元组展开成 日期 → 名字（构建期一次性算好） */
+    private static Map<LocalDate, String> holidayNames(String... args) {
+        Map<LocalDate, String> out = new java.util.HashMap<>();
+        for (int i = 0; i + 2 < args.length; i += 3) {
+            String name = args[i];
+            LocalDate from = LocalDate.parse(args[i + 1]);
+            LocalDate to = LocalDate.parse(args[i + 2]);
+            for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+                out.put(d, name);
+            }
+        }
+        return Map.copyOf(out);
+    }
+
+    /**
      * 某天的默认类型。
      *
      * @param date 日期

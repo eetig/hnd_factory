@@ -39,5 +39,8 @@ public class AttendanceDayVO {
     /** 当天是否值班（按次计费，与白班/加班可并存） */
     private Boolean hasDuty;
 
+    /** 法定节假日的名字（元旦/春节/清明/劳动/端午/中秋/国庆）；周末休息日为 null */
+    private String holidayName;
+
     private String note;
 }
