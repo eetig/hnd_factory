@@ -16,7 +16,9 @@ public record AuditRecord(
         String path,
         String target,
         String paramsDigest,
-        String result) {
+        String result,
+        /** 设备画像："型号|系统|App版本"，来自请求头 X-Device；没有就按 UA 粗解析 */
+        String device) {
 
     /** 参数摘要：只留 16 位，够区分"同一个参数集"就行，避免长串占地方 */
     public static String digest(String raw) {

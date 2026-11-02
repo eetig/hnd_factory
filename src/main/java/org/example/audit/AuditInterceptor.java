@@ -53,6 +53,7 @@ public class AuditInterceptor implements HandlerInterceptor {
                 .username(RequestMetadata.username())
                 .ip(RequestMetadata.ip(request))
                 .userAgent(RequestMetadata.userAgent(request))
+                  .device(RequestMetadata.device(request))
                 .method(method)
                 .path(path)
                 .target("")

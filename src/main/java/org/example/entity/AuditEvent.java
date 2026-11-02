@@ -30,6 +30,9 @@ public class AuditEvent {
 
     private String userAgent;
 
+    /** 设备画像："型号|系统"（2026-11-02 风控用） */
+    private String device;
+
     private String method;
 
     private String path;

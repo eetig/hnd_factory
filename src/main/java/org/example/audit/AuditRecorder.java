@@ -49,6 +49,7 @@ public class AuditRecorder {
             entity.setUsername(record.username() == null ? "" : record.username());
             entity.setIp(record.ip() == null ? "" : record.ip());
             entity.setUserAgent(truncate(record.userAgent(), 255));
+        entity.setDevice(truncate(record.device(), 128));
             entity.setMethod(record.method() == null ? "" : record.method());
             entity.setPath(truncate(record.path(), 255));
             entity.setTarget(truncate(record.target(), 128));
@@ -72,6 +73,11 @@ public class AuditRecorder {
 
     /** 便捷方法：注册 / 登录 / 退出这类"非 HTTP 写请求"的事件 */
     public void recordAuthEvent(String event, String username, String ip, String userAgent) {
+        recordAuthEvent(event, username, ip, userAgent, "");
+    }
+
+    /** 带设备画像的认证事件（2026-11-02：登录/注册/退出也记设备，风控要看"是不是换设备了"） */
+    public void recordAuthEvent(String event, String username, String ip, String userAgent, String device) {
         record(AuditRecord.builder()
                 .event(event)
                 .username(username)
