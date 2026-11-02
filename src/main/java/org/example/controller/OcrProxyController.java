@@ -33,15 +33,25 @@ public class OcrProxyController {
     @Autowired
     private OcrProxyService ocrProxyService;
 
+    /**
+     * 识别一张图。
+     *
+     * <p>{@code tiles} 是 2026-11-02 新增的分块识别：服务端把图切成 tiles×tiles、
+     * 每块放大 3 倍再并行送 OCR，用于"站远处拍的罐体标牌"这种小字场景
+     * （使用方：「我有时候就是图省事，不想走太近」）。不传或小于 2 时就是普通单张识别。
+     */
     @PostMapping(value = "/recognize", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<JsonNode> recognize(@RequestParam("file") MultipartFile file,
-                                     @RequestParam(value = "fileName", required = false) String fileName) {
+                                     @RequestParam(value = "fileName", required = false) String fileName,
+                                     @RequestParam(value = "tiles", required = false, defaultValue = "0") int tiles) {
         if (file == null || file.isEmpty()) {
             return Result.error(400, "没有收到图片");
         }
         try {
-            return Result.success(ocrProxyService.recognize(file.getBytes(),
-                    fileName == null || fileName.isBlank() ? file.getOriginalFilename() : fileName));
+            String name = fileName == null || fileName.isBlank() ? file.getOriginalFilename() : fileName;
+            return Result.success(tiles >= 2
+                    ? ocrProxyService.recognizeTiled(file.getBytes(), name, tiles)
+                    : ocrProxyService.recognize(file.getBytes(), name));
         } catch (BusinessException e) {
             return Result.error(400, e.getMessage());
         } catch (IOException e) {
