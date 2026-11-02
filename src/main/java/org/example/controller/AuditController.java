@@ -52,8 +52,14 @@ import java.util.Map;
 @RequestMapping("/api/audit")
 public class AuditController {
 
-    /** 日志保留天数：审计日志能删就等于没有，所以只做过期清理 */
-    public static final int RETENTION_DAYS = 180;
+    /**
+     * 日志保留天数：**365 天**（2026-11-02 从 180 天上调）。
+     *
+     * 原因：《网络安全法》第 21 条要求网络日志留存**不少于六个月**，
+     * 180 天约等于 5.9 个月，卡在红线下面；改成 365 天既满足要求，也不会无限膨胀。
+     * 使用方明确要求「不触犯任何法律」，这一条就是落在这个要求上的。
+     */
+    public static final int RETENTION_DAYS = 365;
 
     @Autowired
     private AuditRecorder auditRecorder;
