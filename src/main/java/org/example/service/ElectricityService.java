@@ -97,6 +97,8 @@ public class ElectricityService {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("meterId", meter.getId());
             row.put("meterNo", meter.getMeterNo());
+            row.put("excelNo", meter.getExcelNo());
+            row.put("excelNo", meter.getExcelNo());
             row.put("meterName", meter.getMeterName());
             row.put("meterCode", meter.getMeterCode());
             row.put("section", meter.getSection());

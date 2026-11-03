@@ -25,8 +25,15 @@ public class ElectricityMeter {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** 顺序号：截图里从左到右 1~37，稳定不变（插新表不重排） */
+    /** 内部顺序号（1~38，只用来排序与定位，界面不显示） */
     private Integer meterNo;
+
+    /**
+     * Excel 表头那一行的编号（1~37，**有一列为空** = 150车间+精品四甲）。
+     * 2026-11-03：使用方确认「38 列、编号只到 37，有一列不编号」，
+     * 所以显示编号与内部顺序必须是两个字段，否则永远对不上。
+     */
+    private String excelNo;
 
     /** 电表名称（位置 / 用途） */
     private String meterName;
