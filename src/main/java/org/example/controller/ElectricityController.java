@@ -43,7 +43,7 @@ public class ElectricityController {
     @Autowired
     private org.example.service.ElectricityImportService importService;
 
-    /** 电表台账（全部 37 块） */
+    /** 电表台账（全部 38 块：37 块有编号 + 150车间 1AN28 不编号） */
     @GetMapping("/meters")
     public Result<List<ElectricityMeter>> meters() {
         requireLogin();
@@ -58,7 +58,7 @@ public class ElectricityController {
     }
 
     /**
-     * 抄表板：某一天 37 块表各自的上次读数与当天已填值。
+     * 抄表板：某一天 38 块表（37 块有编号 + 150车间 1AN28 不编号）各自的上次读数与当天已填值。
      *
      * @param date yyyy-MM-dd，缺省今天
      */
