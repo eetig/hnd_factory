@@ -325,7 +325,20 @@ public class ElectricityBillController {
                 item.put("kwh", entry.getValue().setScale(2, RoundingMode.HALF_UP));
                 items.add(item);
             }
-            items.sort((a, b) -> ((BigDecimal) b.get("kwh")).compareTo((BigDecimal) a.get("kwh")));
+            /*
+             * 按表内编号（excelNo）升序 —— 使用方 2026-11-04：「这个详细里面，按编号从小到大排列」。
+             * 编号为空（例如早期没填的）排最后，同编号再按内部顺序。
+             */
+            items.sort((a, b) -> {
+                String na = String.valueOf(a.get("excelNo") == null ? "" : a.get("excelNo"));
+                String nb = String.valueOf(b.get("excelNo") == null ? "" : b.get("excelNo"));
+                int ia = parseIntSafe(na);
+                int ib = parseIntSafe(nb);
+                if (ia != ib) {
+                    return Integer.compare(ia, ib);
+                }
+                return Integer.compare((Integer) a.get("meterNo"), (Integer) b.get("meterNo"));
+            });
             Map<String, Object> groupRow = new LinkedHashMap<>();
             groupRow.put("section", group);
             groupRow.put("total", doneByGroup.getOrDefault(group, BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
@@ -353,5 +366,14 @@ public class ElectricityBillController {
         data.put("lastDate", lastDate == null ? "" : lastDate.toString());
         data.put("lastDailyKwh", lastDailyTotal);
         return Result.success(data);
+    }
+
+    /** 编号可能是空字符串，排最后；纯数字才算得出先后 */
+    private static int parseIntSafe(String value) {
+        try {
+            return Integer.parseInt(value == null ? "" : value.trim());
+        } catch (Exception e) {
+            return Integer.MAX_VALUE;
+        }
     }
 }
