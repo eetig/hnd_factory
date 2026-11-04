@@ -119,6 +119,10 @@ public class ArchiveAiService {
     @Autowired
     private OcrProxyService ocrProxyService;
 
+    /** PDF / Word / Excel 的正文抽取（2026-11-05）。抽不到会返回 null，这里退回文件名判断 */
+    @Autowired
+    private ArchiveTextExtractor textExtractor;
+
     @Value("${archive.ai.deepseek-key:}")
     private String deepseekKey;
 
@@ -156,6 +160,16 @@ public class ArchiveAiService {
                 }
             } catch (Exception e) {
                 log.info("归档 AI：OCR 不可用，退回文件名判断（{}）", e.getMessage());
+            }
+        }
+
+        // 非图片类型：抽正文（PDF 前 15 页 / Word 全文 / Excel 前 5 表各 200 行）。
+        // 抽不到就是 null，下面照旧按文件名判断，并在理由里说明正文缺失。
+        if (text.isBlank()) {
+            String extracted = textExtractor.extract(name, mimeType, bytes);
+            if (extracted != null && !extracted.isBlank()) {
+                text = extracted;
+                textSource = "正文";
             }
         }
 

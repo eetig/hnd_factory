@@ -64,6 +64,10 @@ dependencies {
 
     // EasyExcel：本地解析工单导入文件
     implementation 'com.alibaba:easyexcel:3.3.3'
+    // 资料归档 AI：PDF 正文提取（2026-11-05）。PDFBox 3.x 的 Loader API 与 2.x 不兼容，绑定 3.x
+    implementation 'org.apache.pdfbox:pdfbox:3.0.3'
+    // Word/Excel 正文提取：easyexcel 只覆盖 Excel，Word 要 poi-ooxml（它同时给 Excel 提供 WorkbookFactory）
+    implementation 'org.apache.poi:poi-ooxml:5.3.0'
 
     // 服务间共享契约（ExcelResult / GoodsMoveExcelDTO / WorkOrderExcelDTO），
     // 由 shared-contract 定义唯一一份，勿在此另行复制
