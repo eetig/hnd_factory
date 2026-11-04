@@ -65,7 +65,13 @@ public class ElectricityMonthlyController {
         COLUMNS.put("公用工程", List.of(3, 20, 28, 33));
         COLUMNS.put("乙炔车间", List.of(25, 26, 27));
         COLUMNS.put("1#厂房", List.of(16, 17, 18, 19, 29));
-        COLUMNS.put("2#厂房", List.of(6, 7, 8, 9, 10, 11, 28, 30, 31));
+        /*
+         * 2#厂房 = 6~11 + 150车间 + 30 + 31
+         * 150车间在表里**不编号**（1AN28 是柜号不是编号），所以这里用它的内部顺序 38 定位。
+         * 2026-11-04 重排编号后：28=低压循环泵 · 29=1#厂房(1ANE3) · 30=2#厂房(1ANE3) ·
+         * 31=2#厂房(1ANE4) · 32=4#厂房(1ANE5) · 33=空压制氮 · 34=自控消防 · 35=中控 · 36=污水 · 37=办公楼
+         */
+        COLUMNS.put("2#厂房", List.of(6, 7, 8, 9, 10, 11, 38, 30, 31));
         COLUMNS.put("4#厂房", List.of(12, 13, 14, 15, 32));
         COLUMNS.put("中央控制室", List.of(35));
         COLUMNS.put("污水区", List.of(36));
