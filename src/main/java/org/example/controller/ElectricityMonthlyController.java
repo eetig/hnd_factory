@@ -166,6 +166,15 @@ public class ElectricityMonthlyController {
             periods.add(row);
         }
 
+        /*
+         * 显示顺序（2026-11-04 使用方：「其它放到办公楼后面」）：
+         *   总电量 · 公用工程 · 乙炔 · 1# · 2# · 4# · 中控 · 污水 · 办公 · **其它** · 备电 · 1#空压机
+         * 「其它」= 总电量 − 前面八项之和（他截图里红框那 8 个格子），倒挤必然平。
+         */
+        List<String> DISPLAY_ORDER = List.of(
+                "总电量", "公用工程", "乙炔车间", "1#厂房", "2#厂房", "4#厂房",
+                "中央控制室", "污水区", "办公楼", "其它", "2#空压机(备电)", "1#空压机");
+
         // 按列汇总
         Map<String, BigDecimal> values = new LinkedHashMap<>();
         for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
@@ -187,14 +196,15 @@ public class ElectricityMonthlyController {
         // 占比：分母是总电量；两个"查看"列不算占比
         BigDecimal denominator = total.compareTo(BigDecimal.ZERO) == 0 ? BigDecimal.ONE : total;
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map.Entry<String, BigDecimal> entry : values.entrySet()) {
+        for (String column : DISPLAY_ORDER) {
+            BigDecimal value = values.getOrDefault(column, BigDecimal.ZERO);
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("name", entry.getKey());
-            row.put("kwh", entry.getValue());
-            boolean viewOnly = entry.getKey().startsWith("2#空压机") || "1#空压机".equals(entry.getKey());
+            row.put("name", column);
+            row.put("kwh", value);
+            boolean viewOnly = column.startsWith("2#空压机") || "1#空压机".equals(column);
             row.put("viewOnly", viewOnly);
             row.put("ratio", viewOnly ? null
-                    : entry.getValue().divide(denominator, 6, RoundingMode.HALF_UP).doubleValue());
+                    : value.divide(denominator, 6, RoundingMode.HALF_UP).doubleValue());
             rows.add(row);
         }
 
