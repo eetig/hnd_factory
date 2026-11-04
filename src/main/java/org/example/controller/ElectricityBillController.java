@@ -258,8 +258,20 @@ public class ElectricityBillController {
         BigDecimal advanceKwh = estimateTotal.multiply(BUFFER).setScale(2, RoundingMode.HALF_UP);
 
         // 单价：按"预提电量"命中档（Q2 ①）
-        BigDecimal price = advanceKwh.compareTo(new BigDecimal("100000")) <= 0
-                ? new BigDecimal("1.1")
+        /*
+         * 电价档位（2026-11-04 使用方按真实账单校正）。
+         *
+         * 真实账单（10 月，国网湖北）：本期电量 69,690 kWh，本期电费 64,479.78 元
+         *   ⇒ 实际综合含税单价 = 64,479.78 ÷ 69,690 = 0.9252 元/kWh
+         * 原来 0~10 万档用 1.1 ⇒ 高估 18.9% ⇒ 预提明显偏高（使用方：「系数明显不对」）。
+         *
+         * 新档位：
+         *   ≤ 7 万 kWh        → 0.9252（按 10 月账单实测的综合单价）
+         *   7 万 ~ 20 万 kWh  → 0.9（沿用，与上一档单调衔接）
+         *   > 20 万 kWh       → 0.72（使用方说超过 20 万的历史计算还是蛮准的，暂不动）
+         */
+        BigDecimal price = advanceKwh.compareTo(new BigDecimal("70000")) <= 0
+                ? new BigDecimal("0.9252")
                 : advanceKwh.compareTo(new BigDecimal("200000")) <= 0
                 ? new BigDecimal("0.9")
                 : new BigDecimal("0.72");
