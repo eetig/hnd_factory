@@ -159,6 +159,17 @@ public class ElectricityMonthlyController {
             if (periodDays <= 0) {
                 continue;
             }
+            /*
+             * 日窗口裁剪（2026-11-04 使用方：「所有抄表都是早上 8:00，所以 7.31 日这天算上去就不对了」）。
+             * 一期覆盖 periodStart..periodEnd−1 这些日窗口，只把落在 [start, end] 的按天数比例计入。
+             * 例：7/31 → 8/07 落在 8 月的是 8/01~8/06 共 6 天 ⇒ 按 6/7 折算，7/31 那天归 7 月。
+             */
+            LocalDate windowStart = periodStart.isBefore(start) ? start : periodStart;
+            LocalDate windowEnd = periodEnd.isAfter(end) ? end.plusDays(1) : periodEnd;
+            long windowDays = Math.max(0, ChronoUnit.DAYS.between(windowStart, windowEnd));
+            BigDecimal windowFactor = BigDecimal.valueOf(windowDays)
+                    .divide(BigDecimal.valueOf(periodDays), 6, RoundingMode.HALF_UP);
+
             Map<Integer, BigDecimal> usage = usageByDate.getOrDefault(periodEnd, Map.of());
 
             Map<String, BigDecimal> values = new LinkedHashMap<>();
@@ -167,7 +178,8 @@ public class ElectricityMonthlyController {
                 for (Integer no : entry.getValue()) {
                     sum = sum.add(usage.getOrDefault(no, BigDecimal.ZERO));
                 }
-                values.put(entry.getKey(), sum.setScale(2, RoundingMode.HALF_UP));
+                values.put(entry.getKey(),
+                        sum.multiply(windowFactor).setScale(2, RoundingMode.HALF_UP));
             }
             BigDecimal periodTotal = values.getOrDefault("总电量", BigDecimal.ZERO);
             BigDecimal others = periodTotal;

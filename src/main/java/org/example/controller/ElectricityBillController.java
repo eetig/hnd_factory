@@ -169,15 +169,21 @@ public class ElectricityBillController {
                 continue;
             }
             /*
-             * 口径（2026-11-04 使用方：「总电量就是图中的总电量」）：
-             * 与「分类汇总」完全一致 —— **区间内各期原值相加，不做日窗口裁剪**。
+             * 日窗口折算（2026-11-04 使用方再次强调：「所有抄表都是早上 8:00，
+             * 所以 7.31 日这天算上去的话就不对了」）。
              *
-             * 之前这里按 08:00 日窗口裁剪，会把 7/31 那天（属 7 月）扣掉，
-             * 算成 180,345 ✗ 而分类汇总那张表是 187,326 ✗ 两处对不上。
-             * 现在两处同源：总电量 = 187,325.7（= 使用方 Excel 的合计）。
+             * 一期 (periodStart 08:00 → periodEnd 08:00) 覆盖的日窗口是
+             * periodStart、periodStart+1、…、periodEnd−1（每个窗口 = 当天 08:00 到次日 08:00）。
+             * 与 [start, end] 求交：窗口数 = min(periodEnd, end+1) − max(periodStart, start)。
+             *
+             * 例：7/31 → 8/07 这一期，7/31 那个窗口属于 7 月，
+             *     落在 8 月的只有 8/01~8/06 共 6 天 ⇒ 按 6/7 折算，不再是整期。
              */
-            long days = periodDays;
-            BigDecimal factor = BigDecimal.ONE;
+            LocalDate windowStart = periodStart.isBefore(start) ? start : periodStart;
+            LocalDate windowEnd = periodEnd.isAfter(end) ? end.plusDays(1) : periodEnd;
+            long days = Math.max(0, ChronoUnit.DAYS.between(windowStart, windowEnd));
+            BigDecimal factor = BigDecimal.valueOf(days)
+                    .divide(BigDecimal.valueOf(periodDays), 6, RoundingMode.HALF_UP);
 
             Map<Integer, BigDecimal> usage = usageByDate.getOrDefault(periodEnd, Map.of());
             Map<String, BigDecimal> columns = new LinkedHashMap<>();
