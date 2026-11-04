@@ -135,6 +135,7 @@ public class ElectricityBillController {
         }
 
         // 逐期折算到本月
+        Map<String, Map<Long, BigDecimal>> meterAccum = new LinkedHashMap<>();
         Map<String, BigDecimal> doneByGroup = new LinkedHashMap<>();
         for (String group : FOUR_GROUPS) {
             doneByGroup.put(group, BigDecimal.ZERO);
@@ -176,6 +177,30 @@ public class ElectricityBillController {
                 BigDecimal part = raw.multiply(factor).setScale(2, RoundingMode.HALF_UP);
                 clipped.put(group, part);
                 doneByGroup.merge(group, part, BigDecimal::add);
+            }
+
+            /*
+             * 逐表累计（2026-11-04 使用方要"红色方块里那 4 个数怎么来的"）：
+             * 与组用量**同一套**日窗口比例，只是细到每块表，前端按组展示。
+             */
+            for (ElectricityReading reading : readings) {
+                if (!reading.getReadDate().equals(end)) {
+                    continue;
+                }
+                ElectricityMeter meter = meterById.get(reading.getMeterId());
+                if (meter == null) {
+                    continue;
+                }
+                String section = meter.getSection() == null ? "" : meter.getSection();
+                if (!FOUR_GROUPS.contains(section)) {
+                    continue;
+                }
+                BigDecimal part = (reading.getUsageQty() == null ? BigDecimal.ZERO : reading.getUsageQty())
+                        .multiply(factor)
+                        .setScale(2, RoundingMode.HALF_UP);
+                meterAccum
+                        .computeIfAbsent(section, k -> new LinkedHashMap<>())
+                        .merge(reading.getMeterId(), part, BigDecimal::add);
             }
 
             // 记下最后一期的日均（B①：只用最后一期）
@@ -269,11 +294,39 @@ public class ElectricityBillController {
             shares.add(row);
         }
 
+        // 逐表明细：组 → [{excelNo, meterNo, meterName, kwh}]，按用量降序
+        List<Map<String, Object>> meterRows = new ArrayList<>();
+        for (String group : FOUR_GROUPS) {
+            Map<Long, BigDecimal> acc = meterAccum.getOrDefault(group, Map.of());
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (Map.Entry<Long, BigDecimal> entry : acc.entrySet()) {
+                ElectricityMeter meter = meterById.get(entry.getKey());
+                if (meter == null) {
+                    continue;
+                }
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("excelNo", meter.getExcelNo());
+                item.put("meterNo", meter.getMeterNo());
+                item.put("meterName", meter.getMeterName());
+                item.put("meterCode", meter.getMeterCode());
+                item.put("multiplier", meter.getMultiplier());
+                item.put("kwh", entry.getValue().setScale(2, RoundingMode.HALF_UP));
+                items.add(item);
+            }
+            items.sort((a, b) -> ((BigDecimal) b.get("kwh")).compareTo((BigDecimal) a.get("kwh")));
+            Map<String, Object> groupRow = new LinkedHashMap<>();
+            groupRow.put("section", group);
+            groupRow.put("total", doneByGroup.getOrDefault(group, BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
+            groupRow.put("meters", items);
+            meterRows.add(groupRow);
+        }
+
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("month", month);
         data.put("from", monthStart.toString());
         data.put("to", monthEnd.toString());
         data.put("customRange", customRange);
+        data.put("meterRows", meterRows);
         data.put("periods", periodRows);
         data.put("doneInMonth", doneByGroup);
         data.put("tailDays", remainDays);
