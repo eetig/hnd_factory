@@ -69,7 +69,10 @@ public class ElectricityBillController {
     private static final BigDecimal TEN_THOUSAND = new BigDecimal("10000");
 
     @GetMapping("/bill")
-    public Result<Map<String, Object>> bill(@RequestParam("month") String month) {
+    public Result<Map<String, Object>> bill(
+            @RequestParam("month") String month,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
         if (!StpUtil.isLogin()) {
             throw new BusinessException("请先登录");
         }
@@ -79,7 +82,19 @@ public class ElectricityBillController {
         } catch (Exception e) {
             throw new BusinessException("月份格式应为 YYYY-MM");
         }
-        LocalDate monthEnd = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
+        /*
+         * 2026-11-04：使用方要求「起始时间 / 结算时间」也能自己填。
+         * 他的历史表是 7/25 → 8/24（30 天），不是自然月，也不做月末补齐。
+         * 所以传了 from/to 就纯按这个区间算；不传才走"自然月 + 月末补"。
+         */
+        LocalDate monthEnd;
+        boolean customRange = from != null && !from.isBlank() && to != null && !to.isBlank();
+        if (customRange) {
+            monthStart = LocalDate.parse(from);
+            monthEnd = LocalDate.parse(to);
+        } else {
+            monthEnd = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
+        }
         // 往前多取 45 天：需要"上月最后一次抄表"作为第一期的起点
         LocalDate fetchFrom = monthStart.minusDays(45);
 
@@ -188,7 +203,9 @@ public class ElectricityBillController {
          * 最后一期是 8/28 08:00 ⇒ 还缺 8/28、8/29、8/30、8/31 四个窗口
          * ⇒ 窗口数 = monthEnd+1 − lastDate（修正前用的是 monthEnd − lastDate，少补一天）。
          */
-        long remainDays = lastDate == null ? 0 : ChronoUnit.DAYS.between(lastDate, monthEnd.plusDays(1));
+        long remainDays = (customRange || lastDate == null)
+                ? 0
+                : ChronoUnit.DAYS.between(lastDate, monthEnd.plusDays(1));
         Map<String, BigDecimal> tailByGroup = new LinkedHashMap<>();
         for (String group : FOUR_GROUPS) {
             tailByGroup.put(group, BigDecimal.ZERO);
@@ -254,6 +271,9 @@ public class ElectricityBillController {
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("month", month);
+        data.put("from", monthStart.toString());
+        data.put("to", monthEnd.toString());
+        data.put("customRange", customRange);
         data.put("periods", periodRows);
         data.put("doneInMonth", doneByGroup);
         data.put("tailDays", remainDays);
