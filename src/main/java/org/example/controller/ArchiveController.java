@@ -11,6 +11,7 @@ import org.example.dto.ArchiveFileResult;
 import org.example.dto.PageResult;
 import org.example.dto.Result;
 import org.example.entity.ArchiveDocument;
+import org.example.exception.BusinessException;
 import org.example.feign.FileFeignClient;
 import org.example.service.ArchiveService;
 import org.slf4j.Logger;
@@ -35,6 +36,7 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 
@@ -52,6 +54,11 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api/archive")
 public class ArchiveController {
+
+    /** 资料归档的 AI 归类建议（2026-11-05）。没配 key 时它自己退回规则匹配 */
+    @Autowired
+    private org.example.service.ArchiveAiService archiveAiService;
+
 
     private static final Logger log = LoggerFactory.getLogger(ArchiveController.class);
 
@@ -154,6 +161,23 @@ public class ArchiveController {
     }
 
     // ================= 分类 =================
+
+    /**
+     * AI 归类建议（2026-11-05）。
+     *
+     * <p>只返回建议，不落库 —— 前端拿它预填「新增资料」表单，由人确认后再 save。
+     * 归档是留证据的事，静默写错一条，半年后没人说得清是谁改的。
+     */
+    @PostMapping(value = "/ai-suggest", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<Map<String, Object>> aiSuggest(@RequestPart("file") MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("没有收到文件");
+        }
+        Map<String, Object> suggestion = archiveAiService.suggest(
+            file.getOriginalFilename(), file.getContentType(), file.getBytes());
+        suggestion.put("llmEnabled", archiveAiService.isLlmEnabled());
+        return Result.success(suggestion);
+    }
 
     @GetMapping("/categories")
     public Result<List<ArchiveCategoryVO>> categories() {
