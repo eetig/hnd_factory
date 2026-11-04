@@ -25,29 +25,30 @@ import java.util.Map;
 import java.util.TreeSet;
 
 /**
- * 电费预提单（2026-11-04）。
+ * 电费预提单（2026-11-04 重写：总电量为基数 + 4 组新定义）。
  *
  * <h2>业务（使用方原话）</h2>
  * <blockquote>
  * 电费预提，是指在月底要交本月电费，我们大概在 23-25 号的时候，会预估本月耗电量，
  * 然后计算要到走 OA 预提多少电费。所以只能比实际用电量多，不然不够交电费。
- * 目前的做法是预估总电量 × 1.05，然后**万位向上取整**。
+ * 目前的做法是预估总电量 × 1.05，然后万位向上取整。
  * </blockquote>
  *
- * <h2>预估电量的算法（他给的例子）</h2>
- * 「7.31 有抄表、8.7 有抄表，相减得到这段时间用电量，除以相隔天数，再乘以 8.1-8.7 相隔天数，
- * 就能估算电量。8.7-8.28 有抄表数据，算出电量，再同理可以估算 8.28-8.31 的用电量。」
+ * <h2>2026-11-04 新分组口径（原话）</h2>
+ * <blockquote>
+ * 电费预提计算逻辑重新做：总电量就是图中的总电量。
+ * 公用工程为图中的公用工程+中央控制室+污水区+办公楼+其它。
+ * 一车间为 2#厂房+4#厂房。二车间为 1#厂房，乙炔车间为乙炔车间
+ * </blockquote>
  *
- * <p>展开就是两条规则：
- * <ol>
- *   <li><b>月初按日均拆分</b>：抄表期可能跨月（例如 7/25 → 8/07），
- *       落在本月的天数按该期日均折算，只把属于本月的部分算进来。</li>
- *   <li><b>月末按最后一期日均补</b>：最后一期之后到月末的天数，用最后一期的日均乘上去。</li>
- * </ol>
- *
- * <h2>为什么"只能多"</h2>
- * 少了要自己垫钱或走二次流程。所以中间有 1.05 的缓冲，最后金额再万位向上取整。
- * 这两步都会让预提 > 实际，这是**设计意图**，不是误差。
+ * <h2>与旧版的差别</h2>
+ * <ul>
+ *   <li><b>基数变了</b>：旧版拿"4 组之和"当预估电量；新版拿<b>总电量（1 号高压计量表）</b>。</li>
+ *   <li><b>公用工程变宽</b>：把中央控制室、污水区、办公楼、其它一起并进公用工程。</li>
+ *   <li><b>一车间</b>=2#+4#；<b>二车间</b>=1#；<b>乙炔</b>=乙炔。</li>
+ * </ul>
+ * <p>四组金额按"各组预估 ÷ 四组预估之和"归一分配（分母是四组之和，不是总电量 ——
+ * 金额必须 100% 分掉），最后一项补差，保证合计正好等于预提总额。</p>
  */
 @RestController
 @RequestMapping("/api/electricity")
@@ -59,216 +60,189 @@ public class ElectricityBillController {
     @Autowired
     private ElectricityReadingMapper readingMapper;
 
-    /** 只统计这 4 项（使用方 2026-11-04 定稿）；总表/变压器只作校验，不进预提 */
-    private static final List<String> FOUR_GROUPS = List.of("公用工程", "一车间", "二车间", "乙炔车间");
-
-    /** 缓冲比例：预估电量 × 1.05（他说"只能比实际多"） */
+    /** 缓冲：预估总电量 × 1.05（"只能多，不能少"） */
     private static final BigDecimal BUFFER = new BigDecimal("1.05");
 
-    /** 万位向上取整 */
     private static final BigDecimal TEN_THOUSAND = new BigDecimal("10000");
+
+    /** 月度 12 列定义（与 ElectricityMonthlyController 同源）；150车间用内部顺序 38 定位（它不编号） */
+    private static final Map<String, List<Integer>> COLUMNS = new LinkedHashMap<>();
+
+    static {
+        COLUMNS.put("总电量", List.of(1));
+        COLUMNS.put("公用工程", List.of(3, 20, 28, 33));
+        COLUMNS.put("乙炔车间", List.of(25, 26, 27));
+        COLUMNS.put("1#厂房", List.of(16, 17, 18, 19, 29));
+        COLUMNS.put("2#厂房", List.of(6, 7, 8, 9, 10, 11, 38, 30, 31));
+        COLUMNS.put("4#厂房", List.of(12, 13, 14, 15, 32));
+        COLUMNS.put("中央控制室", List.of(35));
+        COLUMNS.put("污水区", List.of(36));
+        COLUMNS.put("办公楼", List.of(37));
+    }
+
+    /** 「其它」= 总电量 − 这八项 */
+    private static final List<String> BALANCE_COLUMNS = List.of(
+            "公用工程", "乙炔车间", "1#厂房", "2#厂房", "4#厂房", "中央控制室", "污水区", "办公楼");
+
+    /** 预提的 4 组（2026-11-04 新口径）：组名 → 由哪些月度列相加 */
+    private static final Map<String, List<String>> BILL_GROUPS = new LinkedHashMap<>();
+
+    static {
+        BILL_GROUPS.put("公用工程", List.of("公用工程", "中央控制室", "污水区", "办公楼", "其它"));
+        BILL_GROUPS.put("一车间", List.of("2#厂房", "4#厂房"));
+        BILL_GROUPS.put("二车间", List.of("1#厂房"));
+        BILL_GROUPS.put("乙炔车间", List.of("乙炔车间"));
+    }
 
     @GetMapping("/bill")
     public Result<Map<String, Object>> bill(
-            @RequestParam("month") String month,
+            @RequestParam(value = "month", required = false) String month,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to) {
         if (!StpUtil.isLogin()) {
             throw new BusinessException("请先登录");
         }
-        LocalDate monthStart;
-        try {
-            monthStart = LocalDate.parse(month + "-01");
-        } catch (Exception e) {
-            throw new BusinessException("月份格式应为 YYYY-MM");
-        }
-        /*
-         * 2026-11-04：使用方要求「起始时间 / 结算时间」也能自己填。
-         * 他的历史表是 7/25 → 8/24（30 天），不是自然月，也不做月末补齐。
-         * 所以传了 from/to 就纯按这个区间算；不传才走"自然月 + 月末补"。
-         */
-        LocalDate monthEnd;
+
+        LocalDate start;
+        LocalDate end;
         boolean customRange = from != null && !from.isBlank() && to != null && !to.isBlank();
         if (customRange) {
-            monthStart = LocalDate.parse(from);
-            monthEnd = LocalDate.parse(to);
+            start = LocalDate.parse(from);
+            end = LocalDate.parse(to);
         } else {
-            monthEnd = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
+            if (month == null || month.isBlank()) {
+                throw new BusinessException("要么给 from/to，要么给 month");
+            }
+            start = LocalDate.parse(month + "-01");
+            end = start.withDayOfMonth(start.lengthOfMonth());
         }
-        // 往前多取 45 天：需要"上月最后一次抄表"作为第一期的起点
-        LocalDate fetchFrom = monthStart.minusDays(45);
 
+        // ---- 取数（往前 45 天：需要"区间起点之前最后一次抄表"作为第一期起点）----
         List<ElectricityMeter> meters = meterMapper.selectList(
                 new LambdaQueryWrapper<ElectricityMeter>().orderByAsc(ElectricityMeter::getMeterNo));
-        Map<Long, ElectricityMeter> meterById = new LinkedHashMap<>();
+        Map<Long, Integer> noById = new LinkedHashMap<>();
         for (ElectricityMeter meter : meters) {
-            meterById.put(meter.getId(), meter);
+            noById.put(meter.getId(), meter.getMeterNo());
         }
 
         List<ElectricityReading> readings = readingMapper.selectList(new LambdaQueryWrapper<ElectricityReading>()
-                .ge(ElectricityReading::getReadDate, fetchFrom)
-                .le(ElectricityReading::getReadDate, monthEnd)
+                .ge(ElectricityReading::getReadDate, start.minusDays(45))
+                .le(ElectricityReading::getReadDate, end)
                 .orderByAsc(ElectricityReading::getReadDate));
 
-        // 按日期聚合：每期每组的用量 + 每期的结束日期
         TreeSet<LocalDate> dates = new TreeSet<>();
-        Map<LocalDate, Map<String, BigDecimal>> usageByDate = new LinkedHashMap<>();
+        Map<LocalDate, Map<Integer, BigDecimal>> usageByDate = new LinkedHashMap<>();
         for (ElectricityReading reading : readings) {
-            dates.add(reading.getReadDate());
-            ElectricityMeter meter = meterById.get(reading.getMeterId());
-            if (meter == null) {
+            Integer no = noById.get(reading.getMeterId());
+            if (no == null) {
                 continue;
             }
-            String section = meter.getSection() == null ? "" : meter.getSection();
-            if (!FOUR_GROUPS.contains(section)) {
-                continue; // 总表/变压器不进预提
-            }
+            dates.add(reading.getReadDate());
             usageByDate
                     .computeIfAbsent(reading.getReadDate(), k -> new LinkedHashMap<>())
-                    .merge(section, reading.getUsageQty() == null ? BigDecimal.ZERO : reading.getUsageQty(),
+                    .merge(no, reading.getUsageQty() == null ? BigDecimal.ZERO : reading.getUsageQty(),
                             BigDecimal::add);
         }
 
         List<LocalDate> dateList = new ArrayList<>(dates);
         if (dateList.size() < 2) {
-            throw new BusinessException("这个月抄表期不足两期，无法预估（至少要有上月最后一次和本月一次）");
+            throw new BusinessException("这段区间抄表期不足两期，无法预估（至少要有上月最后一次和本月一次）");
         }
 
-        // 逐期折算到本月
-        Map<String, Map<Long, BigDecimal>> meterAccum = new LinkedHashMap<>();
-        Map<String, BigDecimal> doneByGroup = new LinkedHashMap<>();
-        for (String group : FOUR_GROUPS) {
-            doneByGroup.put(group, BigDecimal.ZERO);
+        // ---- 逐期算 12 列，再折算进区间 ----
+        Map<String, BigDecimal> doneByColumn = new LinkedHashMap<>();
+        for (String column : COLUMNS.keySet()) {
+            doneByColumn.put(column, BigDecimal.ZERO);
         }
-        BigDecimal lastDailyTotal = BigDecimal.ZERO;
-        LocalDate lastDate = null;
-        int lastPeriodDays = 0;
+        doneByColumn.put("其它", BigDecimal.ZERO);
+
         List<Map<String, Object>> periodRows = new ArrayList<>();
+        Map<String, BigDecimal> lastPeriodColumns = null;
+        int lastPeriodDays = 0;
+        BigDecimal lastDailyTotal = BigDecimal.ZERO;
 
         for (int i = 1; i < dateList.size(); i++) {
-            LocalDate start = dateList.get(i - 1);
-            LocalDate end = dateList.get(i);
-            long periodDays = ChronoUnit.DAYS.between(start, end);
+            LocalDate periodStart = dateList.get(i - 1);
+            LocalDate periodEnd = dateList.get(i);
+            long periodDays = ChronoUnit.DAYS.between(periodStart, periodEnd);
             if (periodDays <= 0) {
                 continue;
             }
             /*
-             * 这一期落在本月的"日窗口"数。
+             * 口径（2026-11-04 使用方：「总电量就是图中的总电量」）：
+             * 与「分类汇总」完全一致 —— **区间内各期原值相加，不做日窗口裁剪**。
              *
-             * 使用方 2026-11-04：**所有抄表都在当天 08:00**。
-             * 所以一期 (start 08:00 → end 08:00) 覆盖的日窗口是 start、start+1、…、end−1
-             * （每个窗口 = 当天 08:00 到次日 08:00）。
-             * 与 [monthStart, monthEnd] 求交后：窗口数 = min(end, monthEnd+1) − max(start, monthStart)。
-             *
-             * 修正前用的是 between(max(start, monthStart−1), min(end, monthEnd))，
-             * 对 7/31→8/07 会算成 7 天（其实 7/31 属于 7 月，只有 8/01~8/06 共 6 天）。
+             * 之前这里按 08:00 日窗口裁剪，会把 7/31 那天（属 7 月）扣掉，
+             * 算成 180,345 ✗ 而分类汇总那张表是 187,326 ✗ 两处对不上。
+             * 现在两处同源：总电量 = 187,325.7（= 使用方 Excel 的合计）。
              */
-            LocalDate windowStart = start.isBefore(monthStart) ? monthStart : start;
-            LocalDate windowEndExclusive = end.isAfter(monthEnd) ? monthEnd.plusDays(1) : end;
-            long overlapDays = Math.max(0, ChronoUnit.DAYS.between(windowStart, windowEndExclusive));
+            long days = periodDays;
+            BigDecimal factor = BigDecimal.ONE;
 
-            Map<String, BigDecimal> usage = usageByDate.getOrDefault(end, Map.of());
-            BigDecimal factor = BigDecimal.valueOf(overlapDays)
-                    .divide(BigDecimal.valueOf(periodDays), 6, RoundingMode.HALF_UP);
+            Map<Integer, BigDecimal> usage = usageByDate.getOrDefault(periodEnd, Map.of());
+            Map<String, BigDecimal> columns = new LinkedHashMap<>();
+            for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
+                BigDecimal sum = BigDecimal.ZERO;
+                for (Integer no : entry.getValue()) {
+                    sum = sum.add(usage.getOrDefault(no, BigDecimal.ZERO));
+                }
+                columns.put(entry.getKey(), sum.setScale(2, RoundingMode.HALF_UP));
+            }
+            // 其它 = 该期总电量 − 该期其余八项（逐期倒挤）
+            BigDecimal others = columns.getOrDefault("总电量", BigDecimal.ZERO);
+            for (String column : BALANCE_COLUMNS) {
+                others = others.subtract(columns.getOrDefault(column, BigDecimal.ZERO));
+            }
+            columns.put("其它", others.setScale(2, RoundingMode.HALF_UP));
 
             Map<String, BigDecimal> clipped = new LinkedHashMap<>();
-            for (String group : FOUR_GROUPS) {
-                BigDecimal raw = usage.getOrDefault(group, BigDecimal.ZERO);
-                BigDecimal part = raw.multiply(factor).setScale(2, RoundingMode.HALF_UP);
-                clipped.put(group, part);
-                doneByGroup.merge(group, part, BigDecimal::add);
-            }
-
-            /*
-             * 逐表累计（2026-11-04 使用方要"红色方块里那 4 个数怎么来的"）：
-             * 与组用量**同一套**日窗口比例，只是细到每块表，前端按组展示。
-             */
-            for (ElectricityReading reading : readings) {
-                if (!reading.getReadDate().equals(end)) {
-                    continue;
-                }
-                ElectricityMeter meter = meterById.get(reading.getMeterId());
-                if (meter == null) {
-                    continue;
-                }
-                String section = meter.getSection() == null ? "" : meter.getSection();
-                if (!FOUR_GROUPS.contains(section)) {
-                    continue;
-                }
-                BigDecimal part = (reading.getUsageQty() == null ? BigDecimal.ZERO : reading.getUsageQty())
-                        .multiply(factor)
-                        .setScale(2, RoundingMode.HALF_UP);
-                meterAccum
-                        .computeIfAbsent(section, k -> new LinkedHashMap<>())
-                        .merge(reading.getMeterId(), part, BigDecimal::add);
-            }
-
-            // 记下最后一期的日均（B①：只用最后一期）
-            if (i == dateList.size() - 1) {
-                lastDate = end;
-                lastPeriodDays = (int) periodDays;
-                BigDecimal sum = BigDecimal.ZERO;
-                for (String group : FOUR_GROUPS) {
-                    sum = sum.add(usage.getOrDefault(group, BigDecimal.ZERO));
-                }
-                lastDailyTotal = sum.divide(BigDecimal.valueOf(periodDays), 4, RoundingMode.HALF_UP);
+            for (Map.Entry<String, BigDecimal> entry : columns.entrySet()) {
+                BigDecimal part = entry.getValue().multiply(factor).setScale(2, RoundingMode.HALF_UP);
+                clipped.put(entry.getKey(), part);
+                doneByColumn.merge(entry.getKey(), part, BigDecimal::add);
             }
 
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("from", start.toString());
-            row.put("to", end.toString());
+            row.put("from", periodStart.toString());
+            row.put("to", periodEnd.toString());
             row.put("periodDays", periodDays);
-            row.put("inMonthDays", overlapDays);
-            row.put("usage", clipped);
+            row.put("inRangeDays", days);
+            row.put("columns", clipped);
             periodRows.add(row);
+
+            lastPeriodColumns = columns;
+            lastPeriodDays = (int) periodDays;
+            lastDailyTotal = columns.getOrDefault("总电量", BigDecimal.ZERO)
+                    .divide(BigDecimal.valueOf(periodDays), 4, RoundingMode.HALF_UP);
         }
 
-        /*
-         * 月末补：最后一期之后还要补的"日窗口"数。
-         * 最后一期是 8/28 08:00 ⇒ 还缺 8/28、8/29、8/30、8/31 四个窗口
-         * ⇒ 窗口数 = monthEnd+1 − lastDate（修正前用的是 monthEnd − lastDate，少补一天）。
-         */
-        long remainDays = (customRange || lastDate == null)
-                ? 0
-                : ChronoUnit.DAYS.between(lastDate, monthEnd.plusDays(1));
-        Map<String, BigDecimal> tailByGroup = new LinkedHashMap<>();
-        for (String group : FOUR_GROUPS) {
-            tailByGroup.put(group, BigDecimal.ZERO);
+        // ---- 月末补（只有自然月才补；自定义区间不补）----
+        LocalDate lastDate = dateList.get(dateList.size() - 1);
+        long tailDays = customRange ? 0 : Math.max(0, ChronoUnit.DAYS.between(lastDate, end.plusDays(1)));
+        Map<String, BigDecimal> tailByColumn = new LinkedHashMap<>();
+        for (String column : doneByColumn.keySet()) {
+            tailByColumn.put(column, BigDecimal.ZERO);
         }
-        if (remainDays > 0 && lastDate != null) {
-            // 用最后一期各组日均
-            Map<String, BigDecimal> lastUsage = usageByDate.getOrDefault(lastDate, Map.of());
-            for (String group : FOUR_GROUPS) {
-                BigDecimal daily = lastUsage.getOrDefault(group, BigDecimal.ZERO)
+        if (tailDays > 0 && lastPeriodColumns != null && lastPeriodDays > 0) {
+            for (Map.Entry<String, BigDecimal> entry : lastPeriodColumns.entrySet()) {
+                BigDecimal daily = entry.getValue()
                         .divide(BigDecimal.valueOf(lastPeriodDays), 6, RoundingMode.HALF_UP);
-                tailByGroup.put(group, daily.multiply(BigDecimal.valueOf(remainDays)).setScale(2, RoundingMode.HALF_UP));
+                tailByColumn.put(entry.getKey(),
+                        daily.multiply(BigDecimal.valueOf(tailDays)).setScale(2, RoundingMode.HALF_UP));
             }
         }
 
-        // 预估总电量 = 已抄（折算到本月）+ 月末补
-        Map<String, BigDecimal> estimateByGroup = new LinkedHashMap<>();
-        BigDecimal estimateTotal = BigDecimal.ZERO;
-        for (String group : FOUR_GROUPS) {
-            BigDecimal value = doneByGroup.get(group).add(tailByGroup.get(group));
-            estimateByGroup.put(group, value);
-            estimateTotal = estimateTotal.add(value);
-        }
+        // ---- 预估：基数 = 总电量（1 号表）----
+        BigDecimal doneTotal = doneByColumn.getOrDefault("总电量", BigDecimal.ZERO);
+        BigDecimal tailTotal = tailByColumn.getOrDefault("总电量", BigDecimal.ZERO);
+        BigDecimal estimateTotal = doneTotal.add(tailTotal).setScale(2, RoundingMode.HALF_UP);
 
-        // 预提电量 = 预估 × 1.05
         BigDecimal advanceKwh = estimateTotal.multiply(BUFFER).setScale(2, RoundingMode.HALF_UP);
 
-        // 单价：按"预提电量"命中档（Q2 ①）
         /*
-         * 电价档位（2026-11-04 使用方按真实账单校正）。
-         *
-         * 真实账单（10 月，国网湖北）：本期电量 69,690 kWh，本期电费 64,479.78 元
-         *   ⇒ 实际综合含税单价 = 64,479.78 ÷ 69,690 = 0.9252 元/kWh
-         * 原来 0~10 万档用 1.1 ⇒ 高估 18.9% ⇒ 预提明显偏高（使用方：「系数明显不对」）。
-         *
-         * 新档位：
-         *   ≤ 7 万 kWh        → 0.9252（按 10 月账单实测的综合单价）
-         *   7 万 ~ 20 万 kWh  → 0.9（沿用，与上一档单调衔接）
-         *   > 20 万 kWh       → 0.72（使用方说超过 20 万的历史计算还是蛮准的，暂不动）
+         * 电价档位（2026-11-04 按 10 月真实账单校正）：
+         * 账单 69,690 kWh / 64,479.78 元 ⇒ 综合含税 0.9252 元/kWh
+         *   ≤ 7 万 → 0.9252 ｜ 7~20 万 → 0.9 ｜ > 20 万 → 0.72（历史较准，暂不动）
          */
         BigDecimal price = advanceKwh.compareTo(new BigDecimal("70000")) <= 0
                 ? new BigDecimal("0.9252")
@@ -277,103 +251,69 @@ public class ElectricityBillController {
                 : new BigDecimal("0.72");
 
         BigDecimal amount = advanceKwh.multiply(price).setScale(2, RoundingMode.HALF_UP);
-        // 万位向上取整（Q3：他更正为"万位"、整金额）
-        BigDecimal rounded = amount
+        BigDecimal advanceTotal = amount
                 .divide(TEN_THOUSAND, 0, RoundingMode.CEILING)
                 .multiply(TEN_THOUSAND)
                 .setScale(2, RoundingMode.HALF_UP);
 
-        // 4 项分摊：按预估用量占比（C①），最后一项用差额补齐，保证加起来正好等于预提总额
+        // ---- 4 组（2026-11-04 新口径）----
+        Map<String, BigDecimal> groupEstimate = new LinkedHashMap<>();
+        BigDecimal groupSum = BigDecimal.ZERO;
+        for (Map.Entry<String, List<String>> entry : BILL_GROUPS.entrySet()) {
+            BigDecimal sum = BigDecimal.ZERO;
+            for (String column : entry.getValue()) {
+                sum = sum.add(doneByColumn.getOrDefault(column, BigDecimal.ZERO));
+                sum = sum.add(tailByColumn.getOrDefault(column, BigDecimal.ZERO));
+            }
+            BigDecimal value = sum.setScale(2, RoundingMode.HALF_UP);
+            groupEstimate.put(entry.getKey(), value);
+            groupSum = groupSum.add(value);
+        }
+
         List<Map<String, Object>> shares = new ArrayList<>();
         BigDecimal allocated = BigDecimal.ZERO;
-        for (int i = 0; i < FOUR_GROUPS.size(); i++) {
-            String group = FOUR_GROUPS.get(i);
-            BigDecimal ratio = estimateTotal.compareTo(BigDecimal.ZERO) == 0
+        List<String> groupNames = new ArrayList<>(BILL_GROUPS.keySet());
+        for (int i = 0; i < groupNames.size(); i++) {
+            String group = groupNames.get(i);
+            BigDecimal value = groupEstimate.get(group);
+            BigDecimal ratio = groupSum.compareTo(BigDecimal.ZERO) == 0
                     ? BigDecimal.ZERO
-                    : estimateByGroup.get(group).divide(estimateTotal, 6, RoundingMode.HALF_UP);
-            BigDecimal value;
-            if (i == FOUR_GROUPS.size() - 1) {
-                value = rounded.subtract(allocated);
+                    : value.divide(groupSum, 6, RoundingMode.HALF_UP);
+            BigDecimal groupAmount;
+            if (i == groupNames.size() - 1) {
+                groupAmount = advanceTotal.subtract(allocated); // 最后一项补差，保证合计正好
             } else {
-                value = rounded.multiply(ratio).setScale(2, RoundingMode.HALF_UP);
-                allocated = allocated.add(value);
+                groupAmount = advanceTotal.multiply(ratio).setScale(2, RoundingMode.HALF_UP);
+                allocated = allocated.add(groupAmount);
             }
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("section", group);
-            row.put("estimateKwh", estimateByGroup.get(group).setScale(2, RoundingMode.HALF_UP));
+            row.put("estimateKwh", value);
             row.put("ratio", ratio);
-            row.put("amount", value);
+            row.put("amount", groupAmount);
             shares.add(row);
         }
 
-        // 逐表明细：组 → [{excelNo, meterNo, meterName, kwh}]，按用量降序
-        List<Map<String, Object>> meterRows = new ArrayList<>();
-        for (String group : FOUR_GROUPS) {
-            Map<Long, BigDecimal> acc = meterAccum.getOrDefault(group, Map.of());
-            List<Map<String, Object>> items = new ArrayList<>();
-            for (Map.Entry<Long, BigDecimal> entry : acc.entrySet()) {
-                ElectricityMeter meter = meterById.get(entry.getKey());
-                if (meter == null) {
-                    continue;
-                }
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("excelNo", meter.getExcelNo());
-                item.put("meterNo", meter.getMeterNo());
-                item.put("meterName", meter.getMeterName());
-                item.put("meterCode", meter.getMeterCode());
-                item.put("multiplier", meter.getMultiplier());
-                item.put("kwh", entry.getValue().setScale(2, RoundingMode.HALF_UP));
-                items.add(item);
-            }
-            /*
-             * 按表内编号（excelNo）升序 —— 使用方 2026-11-04：「这个详细里面，按编号从小到大排列」。
-             * 编号为空（例如早期没填的）排最后，同编号再按内部顺序。
-             */
-            items.sort((a, b) -> {
-                String na = String.valueOf(a.get("excelNo") == null ? "" : a.get("excelNo"));
-                String nb = String.valueOf(b.get("excelNo") == null ? "" : b.get("excelNo"));
-                int ia = parseIntSafe(na);
-                int ib = parseIntSafe(nb);
-                if (ia != ib) {
-                    return Integer.compare(ia, ib);
-                }
-                return Integer.compare((Integer) a.get("meterNo"), (Integer) b.get("meterNo"));
-            });
-            Map<String, Object> groupRow = new LinkedHashMap<>();
-            groupRow.put("section", group);
-            groupRow.put("total", doneByGroup.getOrDefault(group, BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
-            groupRow.put("meters", items);
-            meterRows.add(groupRow);
-        }
-
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("month", month);
-        data.put("from", monthStart.toString());
-        data.put("to", monthEnd.toString());
+        data.put("from", start.toString());
+        data.put("to", end.toString());
         data.put("customRange", customRange);
-        data.put("meterRows", meterRows);
+        data.put("lastDate", lastDate.toString());
+        data.put("tailDays", tailDays);
+        data.put("lastDailyKwh", lastDailyTotal);
         data.put("periods", periodRows);
-        data.put("doneInMonth", doneByGroup);
-        data.put("tailDays", remainDays);
-        data.put("tailByGroup", tailByGroup);
-        data.put("estimateByGroup", estimateByGroup);
-        data.put("estimateKwh", estimateTotal.setScale(2, RoundingMode.HALF_UP));
+        data.put("doneByColumn", doneByColumn);
+        data.put("tailByColumn", tailByColumn);
+        data.put("doneTotal", doneTotal);
+        data.put("tailTotal", tailTotal);
+        data.put("estimateKwh", estimateTotal);
         data.put("advanceKwh", advanceKwh);
         data.put("price", price);
         data.put("amount", amount);
-        data.put("advanceTotal", rounded);
+        data.put("advanceTotal", advanceTotal);
+        data.put("groupEstimate", groupEstimate);
+        data.put("groupSum", groupSum.setScale(2, RoundingMode.HALF_UP));
         data.put("shares", shares);
-        data.put("lastDate", lastDate == null ? "" : lastDate.toString());
-        data.put("lastDailyKwh", lastDailyTotal);
         return Result.success(data);
-    }
-
-    /** 编号可能是空字符串，排最后；纯数字才算得出先后 */
-    private static int parseIntSafe(String value) {
-        try {
-            return Integer.parseInt(value == null ? "" : value.trim());
-        } catch (Exception e) {
-            return Integer.MAX_VALUE;
-        }
     }
 }
