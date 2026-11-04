@@ -156,7 +156,7 @@ public class ElectricityController {
         if (!StpUtil.isLogin()) {
             throw new BusinessException("请先登录");
         }
-        if (!StpUtil.hasRole("admin")) {
+        if (!ElectricityClerkController.canWriteReadings()) {
             throw new BusinessException("只有管理员能改电表台账");
         }
     }
