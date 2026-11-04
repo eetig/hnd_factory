@@ -99,4 +99,6 @@ logging:
 archive:
   ai:
     deepseek-key: ${DEEPSEEK_API_KEY:}
-    model: deepseek-chat
+    # 使用方定的型号：DeepSeek-V4.1-Flash（平台 /models 返回的 id 是 deepseek-flash）
+    # 这类"短文本分类"用 flash 够用、单价更低；要换 pro 只改环境变量 DEEPSEEK_MODEL 即可
+    model: ${DEEPSEEK_MODEL:deepseek-flash}
