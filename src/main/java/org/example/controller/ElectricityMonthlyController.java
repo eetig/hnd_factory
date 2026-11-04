@@ -142,23 +142,21 @@ public class ElectricityMonthlyController {
             if (periodDays <= 0) {
                 continue;
             }
-            LocalDate windowStart = periodStart.isBefore(start) ? start : periodStart;
-            LocalDate windowEnd = periodEnd.isAfter(end) ? end.plusDays(1) : periodEnd;
-            long days = Math.max(0, ChronoUnit.DAYS.between(windowStart, windowEnd));
-            BigDecimal factor = BigDecimal.valueOf(days)
-                    .divide(BigDecimal.valueOf(periodDays), 6, RoundingMode.HALF_UP);
-
+            /*
+             * 不做日窗口裁剪，直接整期计（2026-11-04 使用方：「187,326 先按这个来」）。
+             *
+             * 他的 Excel 合计就是四周原值相加：48,862.5 + 48,321.3 + 38,910 + 51,231.9 = 187,325.7 ✓
+             * 如果按 8/01~8/31 裁剪日窗口，会把 7/31 那天（属于 7 月）扣掉，得到 180,345 ✗ 对不上他的表。
+             * 所以这张表的口径 = **区间内各期原值之和**，与他的 Excel 完全一致。
+             */
             Map<Integer, BigDecimal> usage = usageByDate.getOrDefault(periodEnd, Map.of());
             for (Map.Entry<Integer, BigDecimal> entry : usage.entrySet()) {
-                byMeter.merge(entry.getKey(),
-                        entry.getValue().multiply(factor).setScale(2, RoundingMode.HALF_UP),
-                        BigDecimal::add);
+                byMeter.merge(entry.getKey(), entry.getValue(), BigDecimal::add);
             }
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("from", periodStart.toString());
             row.put("to", periodEnd.toString());
             row.put("periodDays", periodDays);
-            row.put("inRangeDays", days);
             periods.add(row);
         }
 
