@@ -139,8 +139,19 @@ public class ElectricityMonthlyController {
         }
 
         List<LocalDate> dateList = new ArrayList<>(dates);
-        Map<Integer, BigDecimal> byMeter = new LinkedHashMap<>();
-        List<Map<String, Object>> periods = new ArrayList<>();
+
+        /*
+         * 逐期算（2026-11-04 使用方要「第一周/第二周/…/合计」的形状）：
+         * 每个抄表期一行，列与列定义一致；「其它」逐期倒挤（该期总电量 − 该期其余八项）。
+         * 合计行 = 各期相加，所以合计行的「其它」= 各期其它之和 ✓
+         */
+        List<Map<String, Object>> periodRows = new ArrayList<>();
+        Map<String, BigDecimal> periodTotals = new LinkedHashMap<>();
+        for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
+            periodTotals.put(entry.getKey(), BigDecimal.ZERO);
+        }
+        periodTotals.put("其它", BigDecimal.ZERO);
+
         for (int i = 1; i < dateList.size(); i++) {
             LocalDate periodStart = dateList.get(i - 1);
             LocalDate periodEnd = dateList.get(i);
@@ -148,53 +159,51 @@ public class ElectricityMonthlyController {
             if (periodDays <= 0) {
                 continue;
             }
-            /*
-             * 不做日窗口裁剪，直接整期计（2026-11-04 使用方：「187,326 先按这个来」）。
-             *
-             * 他的 Excel 合计就是四周原值相加：48,862.5 + 48,321.3 + 38,910 + 51,231.9 = 187,325.7 ✓
-             * 如果按 8/01~8/31 裁剪日窗口，会把 7/31 那天（属于 7 月）扣掉，得到 180,345 ✗ 对不上他的表。
-             * 所以这张表的口径 = **区间内各期原值之和**，与他的 Excel 完全一致。
-             */
             Map<Integer, BigDecimal> usage = usageByDate.getOrDefault(periodEnd, Map.of());
-            for (Map.Entry<Integer, BigDecimal> entry : usage.entrySet()) {
-                byMeter.merge(entry.getKey(), entry.getValue(), BigDecimal::add);
+
+            Map<String, BigDecimal> values = new LinkedHashMap<>();
+            for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
+                BigDecimal sum = BigDecimal.ZERO;
+                for (Integer no : entry.getValue()) {
+                    sum = sum.add(usage.getOrDefault(no, BigDecimal.ZERO));
+                }
+                values.put(entry.getKey(), sum.setScale(2, RoundingMode.HALF_UP));
             }
+            BigDecimal periodTotal = values.getOrDefault("总电量", BigDecimal.ZERO);
+            BigDecimal others = periodTotal;
+            for (String column : BALANCE_COLUMNS) {
+                others = others.subtract(values.getOrDefault(column, BigDecimal.ZERO));
+            }
+            values.put("其它", others.setScale(2, RoundingMode.HALF_UP));
+
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("from", periodStart.toString());
             row.put("to", periodEnd.toString());
             row.put("periodDays", periodDays);
-            periods.add(row);
+            row.put("values", values);
+            periodRows.add(row);
+
+            for (Map.Entry<String, BigDecimal> entry : values.entrySet()) {
+                periodTotals.merge(entry.getKey(), entry.getValue(), BigDecimal::add);
+            }
+        }
+
+        if (periodRows.isEmpty()) {
+            throw new BusinessException("这段区间里没有抄表期（至少要两期才有用量）");
         }
 
         /*
          * 显示顺序（2026-11-04 使用方：「其它放到办公楼后面」）：
-         *   总电量 · 公用工程 · 乙炔 · 1# · 2# · 4# · 中控 · 污水 · 办公 · **其它** · 备电 · 1#空压机
-         * 「其它」= 总电量 − 前面八项之和（他截图里红框那 8 个格子），倒挤必然平。
+         *   总电量 · 公用工程 · 乙炔 · 1# · 2# · 4# · 中控 · 污水 · 办公 · 其它 · 备电 · 1#空压机
          */
         List<String> DISPLAY_ORDER = List.of(
                 "总电量", "公用工程", "乙炔车间", "1#厂房", "2#厂房", "4#厂房",
                 "中央控制室", "污水区", "办公楼", "其它", "2#空压机(备电)", "1#空压机");
 
-        // 按列汇总
-        Map<String, BigDecimal> values = new LinkedHashMap<>();
-        for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
-            BigDecimal sum = BigDecimal.ZERO;
-            for (Integer no : entry.getValue()) {
-                sum = sum.add(byMeter.getOrDefault(no, BigDecimal.ZERO));
-            }
-            values.put(entry.getKey(), sum.setScale(2, RoundingMode.HALF_UP));
-        }
-
-        // 其它 = 总电量 − 其余各列（使用方的倒挤口径）
-        BigDecimal total = values.getOrDefault("总电量", BigDecimal.ZERO);
-        BigDecimal others = total;
-        for (String column : BALANCE_COLUMNS) {
-            others = others.subtract(values.getOrDefault(column, BigDecimal.ZERO));
-        }
-        values.put("其它", others.setScale(2, RoundingMode.HALF_UP));
-
+        Map<String, BigDecimal> values = periodTotals;
         // 占比：分母是总电量；两个"查看"列不算占比
-        BigDecimal denominator = total.compareTo(BigDecimal.ZERO) == 0 ? BigDecimal.ONE : total;
+        BigDecimal totalKwh = values.getOrDefault("总电量", BigDecimal.ZERO);
+        BigDecimal denominator = totalKwh.compareTo(BigDecimal.ZERO) == 0 ? BigDecimal.ONE : totalKwh;
         List<Map<String, Object>> rows = new ArrayList<>();
         for (String column : DISPLAY_ORDER) {
             BigDecimal value = values.getOrDefault(column, BigDecimal.ZERO);
@@ -219,9 +228,9 @@ public class ElectricityMonthlyController {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("from", start.toString());
         data.put("to", end.toString());
-        data.put("periods", periods);
+        data.put("periods", periodRows);
         data.put("rows", rows);
-        data.put("total", total.setScale(2, RoundingMode.HALF_UP));
+        data.put("total", totalKwh.setScale(2, RoundingMode.HALF_UP));
         data.put("ratioSum", ratioSum.setScale(6, RoundingMode.HALF_UP));
         return Result.success(data);
     }
