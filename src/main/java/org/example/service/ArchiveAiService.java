@@ -201,7 +201,10 @@ public class ArchiveAiService {
             + "{\"category\":\"分类名\",\"name\":\"建议的资料名称（去掉扩展名，20 字以内）\","
             + "\"docNo\":\"编号或空串\",\"owner\":\"责任人姓名或空串\","
             + "\"expireDate\":\"YYYY-MM-DD 或空串\",\"originPlace\":\"原件位置或空串\","
-            + "\"confidence\":\"high|medium|low\",\"reason\":\"一句话说明判断依据\"}";
+            + "\"confidence\":\"high|medium|low\",\"reason\":\"一句话说明判断依据\",\n"
+            + "\"summary\":\"给人工看的摘要：三行、约 100 字。第一行这是什么（全称+编号），"
+            + "第二行关键要素（有效期/责任人/金额/相对方，没有的省略），"
+            + "第三行分类依据或用途。不要重复文件名，不要编造没出现的信息\"}";
 
         try {
             Map<String, Object> body = new LinkedHashMap<>();
@@ -245,6 +248,9 @@ public class ArchiveAiService {
             out.put("originPlace", trim(parsed.path("originPlace").asText(""), 128));
             out.put("confidence", normalizeConfidence(parsed.path("confidence").asText("low")));
             out.put("reason", trim(parsed.path("reason").asText(""), 200));
+            // 备注摘要（2026-11-05）：优先用模型给的，没有就用 reason 顶上
+            String summary = parsed.path("summary").asText("");
+            out.put("summary", trim(summary.isBlank() ? parsed.path("reason").asText("") : summary, 480));
             out.put("textSource", textSource);
             return out;
         } catch (Exception e) {
@@ -288,6 +294,26 @@ public class ArchiveAiService {
         out.put("reason", bestScore > 0
             ? "按文件名词频判断（命中 " + bestScore + " 分）"
             : "没有命中关键词，请手动选分类");
+        /*
+         * 规则兜底的摘要（2026-11-05）：没有模型时也得有东西可搜。
+         * 三行结构跟模型版一致，只是内容只能来自文件名与正则抽到的字段。
+         */
+        StringBuilder summary = new StringBuilder();
+        summary.append("【").append(bestScore > 0 ? bestCategory : "未分类").append("】")
+            .append(suggestName(fileName));
+        String docNo = firstMatch(DOC_NO, text, 1);
+        String expire = firstDate(EXPIRE, text);
+        if (!docNo.isBlank() || !expire.isBlank()) {
+            summary.append("\n");
+            if (!docNo.isBlank()) {
+                summary.append("编号 ").append(docNo);
+            }
+            if (!expire.isBlank()) {
+                summary.append(docNo.isBlank() ? "" : " · ").append("有效期至 ").append(expire);
+            }
+        }
+        summary.append("\n来源：").append(textSource);
+        out.put("summary", trim(summary.toString(), 480));
         out.put("textSource", textSource);
         return out;
     }

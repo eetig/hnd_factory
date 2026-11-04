@@ -76,7 +76,9 @@ public class ArchiveServiceImpl implements ArchiveService {
             wrapper.and(w -> w.like(ArchiveDocument::getName, keyword)
                     .or().like(ArchiveDocument::getDocNo, keyword)
                     .or().like(ArchiveDocument::getOwner, keyword)
-                    .or().like(ArchiveDocument::getOriginPlace, keyword));
+                    .or().like(ArchiveDocument::getOriginPlace, keyword)
+                    // 备注也进搜索（2026-11-05）：AI 摘要写在备注里，不搜它等于白写
+                    .or().like(ArchiveDocument::getRemark, keyword));
         }
 
         if (query.getCategoryId() != null) {
