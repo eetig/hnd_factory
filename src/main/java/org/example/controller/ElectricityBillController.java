@@ -136,10 +136,20 @@ public class ElectricityBillController {
             if (periodDays <= 0) {
                 continue;
             }
-            // 这一期与本月重叠的天数：(start, end] 里落在 [monthStart, monthEnd] 的部分
-            LocalDate overlapStart = start.isBefore(monthStart) ? monthStart.minusDays(1) : start;
-            LocalDate overlapEnd = end.isAfter(monthEnd) ? monthEnd : end;
-            long overlapDays = Math.max(0, ChronoUnit.DAYS.between(overlapStart, overlapEnd));
+            /*
+             * 这一期落在本月的"日窗口"数。
+             *
+             * 使用方 2026-11-04：**所有抄表都在当天 08:00**。
+             * 所以一期 (start 08:00 → end 08:00) 覆盖的日窗口是 start、start+1、…、end−1
+             * （每个窗口 = 当天 08:00 到次日 08:00）。
+             * 与 [monthStart, monthEnd] 求交后：窗口数 = min(end, monthEnd+1) − max(start, monthStart)。
+             *
+             * 修正前用的是 between(max(start, monthStart−1), min(end, monthEnd))，
+             * 对 7/31→8/07 会算成 7 天（其实 7/31 属于 7 月，只有 8/01~8/06 共 6 天）。
+             */
+            LocalDate windowStart = start.isBefore(monthStart) ? monthStart : start;
+            LocalDate windowEndExclusive = end.isAfter(monthEnd) ? monthEnd.plusDays(1) : end;
+            long overlapDays = Math.max(0, ChronoUnit.DAYS.between(windowStart, windowEndExclusive));
 
             Map<String, BigDecimal> usage = usageByDate.getOrDefault(end, Map.of());
             BigDecimal factor = BigDecimal.valueOf(overlapDays)
@@ -173,8 +183,12 @@ public class ElectricityBillController {
             periodRows.add(row);
         }
 
-        // 月末补：最后一期之后到月末
-        long remainDays = lastDate == null ? 0 : ChronoUnit.DAYS.between(lastDate, monthEnd);
+        /*
+         * 月末补：最后一期之后还要补的"日窗口"数。
+         * 最后一期是 8/28 08:00 ⇒ 还缺 8/28、8/29、8/30、8/31 四个窗口
+         * ⇒ 窗口数 = monthEnd+1 − lastDate（修正前用的是 monthEnd − lastDate，少补一天）。
+         */
+        long remainDays = lastDate == null ? 0 : ChronoUnit.DAYS.between(lastDate, monthEnd.plusDays(1));
         Map<String, BigDecimal> tailByGroup = new LinkedHashMap<>();
         for (String group : FOUR_GROUPS) {
             tailByGroup.put(group, BigDecimal.ZERO);
