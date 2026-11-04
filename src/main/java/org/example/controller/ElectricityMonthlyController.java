@@ -3,6 +3,7 @@ package org.example.controller;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.dto.Result;
+import org.example.electricity.ElectricityColumns;
 import org.example.entity.ElectricityMeter;
 import org.example.entity.ElectricityReading;
 import org.example.exception.BusinessException;
@@ -57,33 +58,11 @@ public class ElectricityMonthlyController {
     @Autowired
     private ElectricityReadingMapper readingMapper;
 
-    /** 列定义：名称 → 参与该列的 meterNo（顺序即显示顺序） */
-    private static final Map<String, List<Integer>> COLUMNS = new LinkedHashMap<>();
-
-    static {
-        COLUMNS.put("总电量", List.of(1));
-        COLUMNS.put("公用工程", List.of(3, 20, 28, 33));
-        COLUMNS.put("乙炔车间", List.of(25, 26, 27));
-        COLUMNS.put("1#厂房", List.of(16, 17, 18, 19, 29));
-        /*
-         * 2#厂房 = 6~11 + 150车间 + 30 + 31
-         * 150车间在表里**不编号**（1AN28 是柜号不是编号），所以这里用它的内部顺序 38 定位。
-         * 2026-11-04 重排编号后：28=低压循环泵 · 29=1#厂房(1ANE3) · 30=2#厂房(1ANE3) ·
-         * 31=2#厂房(1ANE4) · 32=4#厂房(1ANE5) · 33=空压制氮 · 34=自控消防 · 35=中控 · 36=污水 · 37=办公楼
-         */
-        COLUMNS.put("2#厂房", List.of(6, 7, 8, 9, 10, 11, 38, 30, 31));
-        COLUMNS.put("4#厂房", List.of(12, 13, 14, 15, 32));
-        COLUMNS.put("中央控制室", List.of(35));
-        COLUMNS.put("污水区", List.of(36));
-        COLUMNS.put("办公楼", List.of(37));
-        // 以下两列只用于"查看运转情况"，不参与合计
-        COLUMNS.put("2#空压机(备电)", List.of(33));
-        COLUMNS.put("1#空压机", List.of(5));
-    }
-
-    /** 参与"其它"倒挤的列（不含备电、1#空压机、总电量本身） */
-    private static final List<String> BALANCE_COLUMNS = List.of(
-            "公用工程", "乙炔车间", "1#厂房", "2#厂房", "4#厂房", "中央控制室", "污水区", "办公楼");
+    /*
+     * 12 列定义与其它倒挤都移到 org.example.electricity.ElectricityColumns
+     * （原来这里和 ElectricityBillController 各一份，必须逐字一致 —— 抽成一份真相）。
+     */
+    private static final Map<String, List<Integer>> COLUMNS = ElectricityColumns.COLUMNS;
 
     @GetMapping("/monthly")
     public Result<Map<String, Object>> monthly(
@@ -172,21 +151,13 @@ public class ElectricityMonthlyController {
 
             Map<Integer, BigDecimal> usage = usageByDate.getOrDefault(periodEnd, Map.of());
 
+            // 先按整期算 12 列（含倒挤的其它），再按日窗口比例折算进区间
+            Map<String, BigDecimal> periodValues = ElectricityColumns.compute(usage);
             Map<String, BigDecimal> values = new LinkedHashMap<>();
-            for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
-                BigDecimal sum = BigDecimal.ZERO;
-                for (Integer no : entry.getValue()) {
-                    sum = sum.add(usage.getOrDefault(no, BigDecimal.ZERO));
-                }
+            for (Map.Entry<String, BigDecimal> entry : periodValues.entrySet()) {
                 values.put(entry.getKey(),
-                        sum.multiply(windowFactor).setScale(2, RoundingMode.HALF_UP));
+                        entry.getValue().multiply(windowFactor).setScale(2, RoundingMode.HALF_UP));
             }
-            BigDecimal periodTotal = values.getOrDefault("总电量", BigDecimal.ZERO);
-            BigDecimal others = periodTotal;
-            for (String column : BALANCE_COLUMNS) {
-                others = others.subtract(values.getOrDefault(column, BigDecimal.ZERO));
-            }
-            values.put("其它", others.setScale(2, RoundingMode.HALF_UP));
 
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("from", periodStart.toString());

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -38,6 +39,9 @@ public class ElectricityController {
 
     @Autowired
     private ElectricityService electricityService;
+
+    @Autowired
+    private org.example.service.ElectricityImportService importService;
 
     /** 电表台账（全部 37 块） */
     @GetMapping("/meters")
@@ -79,6 +83,49 @@ public class ElectricityController {
 
         String operator = RequestMetadata.username();
         return Result.success(electricityService.saveReadings(date, operator, items));
+    }
+
+    /**
+     * 粘贴导入（2026-11-03）：body { rows: "日期\t读数1\t读数2…" 的多行文本 }。
+     *
+     * 使用方的 Excel 带锁、导出来是乱码，但复制单元格→粘贴通常还能用，
+     * 所以入口是文本框粘贴，而不是上传 xlsx。
+     */
+    @PostMapping("/readings/import")
+    public Result<Map<String, Object>> importRows(@RequestBody Map<String, Object> body) {
+        requireAdmin();
+        String text = body.get("text") == null ? "" : String.valueOf(body.get("text"));
+        if (text.isBlank()) {
+            throw new BusinessException("没有收到要导入的内容");
+        }
+        List<String> dates = new ArrayList<>();
+        List<List<String>> values = new ArrayList<>();
+        for (String line : text.split("\\r?\\n")) {
+            if (line.isBlank()) continue;
+            // Excel 复制是制表符；也容忍逗号/多个空格
+            String[] cells = line.split("\\t|,\\s*|\\s{2,}");
+            if (cells.length < 2) continue;
+            dates.add(cells[0]);
+            List<String> row = new ArrayList<>();
+            for (int i = 1; i < cells.length; i++) row.add(cells[i]);
+            values.add(row);
+        }
+        if (dates.isEmpty()) {
+            throw new BusinessException("没解析出数据行（第一列要是日期）");
+        }
+        return Result.success(importService.importRows(dates, values, RequestMetadata.username()));
+    }
+
+    /**
+     * 按车间汇总（2026-11-03）：使用方要的"各个车间求和"。
+     * 只算用电量，不含电费。
+     */
+    @GetMapping("/summary")
+    public Result<List<Map<String, Object>>> summary(
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        requireLogin();
+        return Result.success(importService.summaryBySection(parseDateOrNull(from), parseDateOrNull(to)));
     }
 
     /** 历史查询 */

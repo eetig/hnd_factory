@@ -3,6 +3,7 @@ package org.example.controller;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.dto.Result;
+import org.example.electricity.ElectricityColumns;
 import org.example.entity.ElectricityMeter;
 import org.example.entity.ElectricityReading;
 import org.example.exception.BusinessException;
@@ -65,34 +66,12 @@ public class ElectricityBillController {
 
     private static final BigDecimal TEN_THOUSAND = new BigDecimal("10000");
 
-    /** 月度 12 列定义（与 ElectricityMonthlyController 同源）；150车间用内部顺序 38 定位（它不编号） */
-    private static final Map<String, List<Integer>> COLUMNS = new LinkedHashMap<>();
-
-    static {
-        COLUMNS.put("总电量", List.of(1));
-        COLUMNS.put("公用工程", List.of(3, 20, 28, 33));
-        COLUMNS.put("乙炔车间", List.of(25, 26, 27));
-        COLUMNS.put("1#厂房", List.of(16, 17, 18, 19, 29));
-        COLUMNS.put("2#厂房", List.of(6, 7, 8, 9, 10, 11, 38, 30, 31));
-        COLUMNS.put("4#厂房", List.of(12, 13, 14, 15, 32));
-        COLUMNS.put("中央控制室", List.of(35));
-        COLUMNS.put("污水区", List.of(36));
-        COLUMNS.put("办公楼", List.of(37));
-    }
-
-    /** 「其它」= 总电量 − 这八项 */
-    private static final List<String> BALANCE_COLUMNS = List.of(
-            "公用工程", "乙炔车间", "1#厂房", "2#厂房", "4#厂房", "中央控制室", "污水区", "办公楼");
-
-    /** 预提的 4 组（2026-11-04 新口径）：组名 → 由哪些月度列相加 */
-    private static final Map<String, List<String>> BILL_GROUPS = new LinkedHashMap<>();
-
-    static {
-        BILL_GROUPS.put("公用工程", List.of("公用工程", "中央控制室", "污水区", "办公楼", "其它"));
-        BILL_GROUPS.put("一车间", List.of("2#厂房", "4#厂房"));
-        BILL_GROUPS.put("二车间", List.of("1#厂房"));
-        BILL_GROUPS.put("乙炔车间", List.of("乙炔车间"));
-    }
+    /*
+     * 12 列定义、四组定义都移到 org.example.electricity.ElectricityColumns
+     * （原来这里和 ElectricityMonthlyController 各复制一份，两处必须逐字一致 —— 抽成一份真相）。
+     */
+    private static final Map<String, List<Integer>> COLUMNS = ElectricityColumns.COLUMNS;
+    private static final Map<String, List<String>> BILL_GROUPS = ElectricityColumns.BILL_GROUPS;
 
     @GetMapping("/bill")
     public Result<Map<String, Object>> bill(
@@ -185,21 +164,8 @@ public class ElectricityBillController {
             BigDecimal factor = BigDecimal.valueOf(days)
                     .divide(BigDecimal.valueOf(periodDays), 6, RoundingMode.HALF_UP);
 
-            Map<Integer, BigDecimal> usage = usageByDate.getOrDefault(periodEnd, Map.of());
-            Map<String, BigDecimal> columns = new LinkedHashMap<>();
-            for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
-                BigDecimal sum = BigDecimal.ZERO;
-                for (Integer no : entry.getValue()) {
-                    sum = sum.add(usage.getOrDefault(no, BigDecimal.ZERO));
-                }
-                columns.put(entry.getKey(), sum.setScale(2, RoundingMode.HALF_UP));
-            }
-            // 其它 = 该期总电量 − 该期其余八项（逐期倒挤）
-            BigDecimal others = columns.getOrDefault("总电量", BigDecimal.ZERO);
-            for (String column : BALANCE_COLUMNS) {
-                others = others.subtract(columns.getOrDefault(column, BigDecimal.ZERO));
-            }
-            columns.put("其它", others.setScale(2, RoundingMode.HALF_UP));
+            Map<String, BigDecimal> columns = ElectricityColumns.compute(
+                    usageByDate.getOrDefault(periodEnd, Map.of()));
 
             Map<String, BigDecimal> clipped = new LinkedHashMap<>();
             for (Map.Entry<String, BigDecimal> entry : columns.entrySet()) {
