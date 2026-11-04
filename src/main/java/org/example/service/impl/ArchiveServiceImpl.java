@@ -99,8 +99,23 @@ public class ArchiveServiceImpl implements ArchiveService {
          *   · 其余情况按 id 降序（最近录入在前）。
          *   · 末尾一律带唯一 id：分页时若排序键有重复行，翻页会出现重复/漏行（本仓库的既有约定）。
          */
+        String sort = query.getSort() == null ? "recent" : query.getSort().trim();
         if (withinDays > 0) {
+            // "只看 30 天内到期"：按有效期升序，最急的排最前
             wrapper.orderByAsc(ArchiveDocument::getExpireDate);
+        } else if ("expire".equals(sort)) {
+            // 有效期升序，没填有效期的排最后（MySQL 升序会把 NULL 排最前，所以先按 IS NULL）
+            wrapper.last("ORDER BY expire_date IS NULL, expire_date ASC, id DESC");
+            IPage<ArchiveDocument> sortedPage = documentMapper.selectPage(new Page<>(pageNum, pageSize), wrapper);
+            Map<Long, String> names = categoryNameMap();
+            List<ArchiveDocumentVO> rows = sortedPage.getRecords().stream()
+                    .map(row -> toVO(row, names.get(row.getCategoryId())))
+                    .toList();
+            Page<ArchiveDocumentVO> result = new Page<>(sortedPage.getCurrent(), sortedPage.getSize(), sortedPage.getTotal());
+            result.setRecords(rows);
+            return result;
+        } else if ("name".equals(sort)) {
+            wrapper.orderByAsc(ArchiveDocument::getName);
         }
         wrapper.orderByDesc(ArchiveDocument::getId);
 

@@ -59,6 +59,10 @@ public class ArchiveController {
     @Autowired
     private org.example.service.ArchiveAiService archiveAiService;
 
+    /** Excel 预览：把表格读成结构化数据（2026-11-05） */
+    @Autowired
+    private org.example.service.ArchiveTextExtractor archiveTextExtractor;
+
 
     private static final Logger log = LoggerFactory.getLogger(ArchiveController.class);
 
@@ -111,6 +115,37 @@ public class ArchiveController {
      * 文件名用 DB 里的 {@code origName} 还原 —— 使用者下载下来应当看到自己当初传的名字，
      * 而不是 {@code <32hex>.pdf}。
      */
+    /**
+     * Excel 预览（2026-11-05）。
+     *
+     * <p>浏览器没有原生 xlsx 渲染，所以后端读成「表名 + 二维数组」交给前端画表格。
+     * **不返回 HTML**：文件内容是不可信输入，拼 HTML 再 v-html 等于自己开 XSS 口子。
+     *
+     * <p>上限：前 3 个表、每表前 100 行 / 30 列。预览是为了认出这是哪张表，
+     * 不是代替 Excel 打开；被截断时响应里 truncated=true。
+     */
+    @GetMapping("/preview-spreadsheet/{id}")
+    public Result<Map<String, Object>> previewSpreadsheet(@PathVariable("id") Long id) {
+        org.example.entity.ArchiveDocument row = archiveService.findDocument(id);
+        if (row == null || row.getFileName() == null || row.getFileName().isBlank()) {
+            throw new BusinessException("这条资料没有电子件");
+        }
+        byte[] data;
+        try {
+            data = fileFeignClient.download(row.getFileName());
+        } catch (Exception e) {
+            log.error("预览 Excel 失败 id={}", id, e);
+            throw new BusinessException("文件读取失败");
+        }
+        java.util.List<java.util.Map<String, Object>> sheets = archiveTextExtractor.readSpreadsheet(row.getOrigName(), data);
+        if (sheets == null) {
+            throw new BusinessException("这个文件读不出表格（可能是加密或损坏）");
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("sheets", sheets);
+        return Result.success(out);
+    }
+
     @GetMapping("/download/{id}")
     public ResponseEntity<byte[]> download(@PathVariable("id") Long id) {
         ArchiveDocument row = archiveService.findDocument(id);

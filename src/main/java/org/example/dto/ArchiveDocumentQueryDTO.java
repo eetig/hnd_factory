@@ -1,5 +1,6 @@
 package org.example.dto;
 
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -28,4 +29,12 @@ public class ArchiveDocumentQueryDTO extends PageQueryDTO {
      * <p>0 或空 = 不筛。页面上那个"只看 30 天内到期"开关就是传 30。
      */
     private Integer expireWithinDays;
+
+    /**
+     * 排序：recent（最近录入在前，默认）/ expire（有效期升序）/ name（名称升序）。
+     * 2026-11-05 使用方要求「列表加最近上传排序」—— 默认本来就是最近在前，
+     * 这里做成显式参数，前端给个下拉，将来要按有效期/名称看也不用改后端。
+     */
+    @Size(max = 16, message = "排序参数过长")
+    private String sort;
 }

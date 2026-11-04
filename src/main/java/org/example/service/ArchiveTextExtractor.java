@@ -19,7 +19,11 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 
 /**
@@ -170,6 +174,64 @@ public class ArchiveTextExtractor {
             }
         }
         return builder.toString();
+    }
+
+
+    /**
+     * 把 Excel 读成「表名 + 二维数组」，给前端画预览表格用（2026-11-05）。
+     *
+     * <p>不返回 HTML：文件内容是不可信输入，拼 HTML 再 v-html 等于自己开 XSS 口子。
+     * 这里只取数据，转义交给前端框架。
+     *
+     * @return 表列表；不是 Excel 或读不出时返回 null
+     */
+    public List<Map<String, Object>> readSpreadsheet(String fileName, byte[] bytes) {
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) {
+            return null;
+        }
+        String lower = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".xlsx") && !lower.endsWith(".xls") && !lower.endsWith(".csv")) {
+            return null;
+        }
+        List<Map<String, Object>> sheets = new ArrayList<>();
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            int sheetIndex = 0;
+            for (Sheet sheet : workbook) {
+                if (sheetIndex >= 3) {
+                    break;
+                }
+                sheetIndex++;
+                List<List<String>> rows = new ArrayList<>();
+                int rowCount = 0;
+                boolean truncated = false;
+                for (Row row : sheet) {
+                    if (rowCount >= 100) {
+                        truncated = true;
+                        break;
+                    }
+                    rowCount++;
+                    List<String> cells = new ArrayList<>();
+                    int lastCol = row.getLastCellNum();
+                    for (int c = 0; c < Math.min(lastCol, 30); c++) {
+                        Cell cell = row.getCell(c, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                        cells.add(cell == null ? "" : cellValue(cell));
+                    }
+                    rows.add(cells);
+                }
+                if (sheet.getLastRowNum() + 1 > 100) {
+                    truncated = true;
+                }
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("name", sheet.getSheetName());
+                one.put("rows", rows);
+                one.put("truncated", truncated);
+                sheets.add(one);
+            }
+            return sheets;
+        } catch (Exception e) {
+            log.info("Excel 预览读取失败（{}）：{}", fileName, e.getMessage());
+            return null;
+        }
     }
 
     private String cellValue(Cell cell) {
