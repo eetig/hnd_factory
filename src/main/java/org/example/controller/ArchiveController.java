@@ -170,6 +170,13 @@ public class ArchiveController {
      */
     @PostMapping(value = "/ai-suggest", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<Map<String, Object>> aiSuggest(@RequestPart("file") MultipartFile file) throws IOException {
+        /*
+         * 只给管理员（2026-11-05，使用方："这个功能只能管理员用，如果所有人都能用，我的 token 成本会很高"）。
+         * 用显式 hasRole 而不是注解 —— 与本项目其它 admin 闸门同一口径（注解在某些路由上不生效）。
+         */
+        if (!StpUtil.hasRole("admin")) {
+            throw new BusinessException("只有管理员能用 AI 归类");
+        }
         if (file == null || file.isEmpty()) {
             throw new BusinessException("没有收到文件");
         }

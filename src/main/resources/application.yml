@@ -87,3 +87,11 @@ purchase:
 app:
   register:
     enabled: true
+
+# ---- 资料归档 AI 归类（2026-11-05）----
+# key 只从环境变量来（compose 里给），不进仓库。
+# 留空时 ArchiveAiService 自动退回"按文件名 / OCR 文本关键词匹配"，功能仍然可用。
+archive:
+  ai:
+    deepseek-key: ${DEEPSEEK_API_KEY:}
+    model: deepseek-chat
