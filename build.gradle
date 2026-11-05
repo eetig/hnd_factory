@@ -61,6 +61,9 @@ dependencies {
 
     // 权限框架
     implementation 'cn.dev33:sa-token-spring-boot3-starter:1.46.0'
+    // Sa-Token 改存 Redis（2026-11-05）：原来存进程内存，重启后端所有人被踢下线
+    implementation 'cn.dev33:sa-token-redis-jackson:1.46.0'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
     // EasyExcel：本地解析工单导入文件
     implementation 'com.alibaba:easyexcel:3.3.3'

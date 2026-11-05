@@ -4,6 +4,16 @@ server:
   port: ${SERVER_PORT:8084}
 
 spring:
+  # ---- Redis（2026-11-05）----
+  # 只给 Sa-Token 存 token：原来存进程内存，重启后端所有人被踢下线
+  # 要回退就删掉本段与两个依赖，Sa-Token 会退回内存存储
+  data:
+    redis:
+      host: ${REDIS_HOST:1Panel-redis-4CjL}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+      timeout: 3s
   application:
     name: hnd_factory # 服务名称，Nacos注册用，Feign里@FeignClient name对应这个
   # mysql配置
