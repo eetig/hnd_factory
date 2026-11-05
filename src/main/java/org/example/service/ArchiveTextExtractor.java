@@ -4,6 +4,7 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -50,6 +51,19 @@ public class ArchiveTextExtractor {
     /** 超过这个大小就不抽了（正文抽取对内存不友好） */
     private static final long MAX_BYTES = 20L * 1024 * 1024;
 
+    /*
+     * ZIP 加固（review 2026-11-05，S3）
+     *
+     * docx/xlsx 本质是 zip：20 MB 的包可以解出几百 MB 甚至更多。
+     * POI 默认 MIN_INFLATE_RATIO=0.01 能挡住最荒谬的比例，但 MAX_ENTRY_SIZE 默认约 4 GB
+     * —— 单个条目仍可能把堆吃满。这里显式收紧到与上传上限同一量级。
+     */
+    static {
+        ZipSecureFile.setMinInflateRatio(0.01d);
+        ZipSecureFile.setMaxEntrySize(64L * 1024 * 1024);
+        ZipSecureFile.setMaxTextSize(16L * 1024 * 1024);
+    }
+
     /** 单次最多返回多少字符（模型侧也只截前 2000 字，这里留余量给正则抽字段） */
     private static final int MAX_CHARS = 20000;
 
@@ -87,6 +101,10 @@ public class ArchiveTextExtractor {
                 return null;
             }
             return text.length() > MAX_CHARS ? text.substring(0, MAX_CHARS) : text;
+        } catch (OutOfMemoryError oom) {
+            // 解析把堆吃满了：不能让整个后端跟着崩，返回 null 退回文件名判断
+            log.warn("资料正文抽取耗尽内存（{}）：已跳过", fileName);
+            return null;
         } catch (Exception e) {
             // 加密 PDF、损坏文件、老式 .doc —— 都走这里，不抛给上层
             log.info("资料正文抽取失败（{}）：{}", fileName, e.getMessage());
@@ -228,6 +246,9 @@ public class ArchiveTextExtractor {
                 sheets.add(one);
             }
             return sheets;
+        } catch (OutOfMemoryError oom) {
+            log.warn("Excel 预览耗尽内存（{}）：已跳过", fileName);
+            return null;
         } catch (Exception e) {
             log.info("Excel 预览读取失败（{}）：{}", fileName, e.getMessage());
             return null;
