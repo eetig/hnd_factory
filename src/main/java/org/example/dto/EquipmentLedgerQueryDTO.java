@@ -24,4 +24,12 @@ public class EquipmentLedgerQueryDTO extends PageQueryDTO {
      * 维护页要能重新启用它们，见 EquipmentLedgerServiceImpl 的同名字段说明）。
      */
     private Boolean onlyEnabled;
+
+    /**
+     * 只看"缺几何"的图纸（2026-11-07）。
+     *
+     * 液位→体积的计算全部依赖 内径/筒长，而当时 92 张图纸里 71 张立式缺这两项。
+     * 没有这个筛选，补齐工作只能靠人翻页找 —— 一个 92 行的列表里找 71 行，眼力活。
+     */
+    private Boolean missingGeometry;
 }

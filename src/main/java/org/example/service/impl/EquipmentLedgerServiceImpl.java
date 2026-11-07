@@ -132,6 +132,12 @@ public class EquipmentLedgerServiceImpl extends ServiceImpl<EquipmentLedgerMappe
         QueryWrapper<EquipmentLedger> wrapper = new QueryWrapper<>();
         // ⚠️ 与 search / listVessels 的默认口径不同：这里**停用的行默认也要返回** ——
         // 那两个是「给使用者挑东西」（停用的不该出现），这里是「维护」（要能重新启用）。
+        // 只看缺几何的图纸（2026-11-07）：内径或筒长任一为空就算缺，计算用不了
+        if (Boolean.TRUE.equals(query.getMissingGeometry())) {
+            // 这里是 QueryWrapper（字符串列名），不能写 Lambda 方法引用
+            wrapper.and(w -> w.isNull("inner_diameter").or().isNull("shell_length"));
+        }
+
         // 只有显式传 onlyEnabled=true 才过滤掉停用的行。
         if (Boolean.TRUE.equals(query.getOnlyEnabled())) {
             wrapper.eq("enabled", 1);
