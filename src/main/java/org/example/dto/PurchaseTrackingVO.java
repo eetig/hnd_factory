@@ -67,6 +67,18 @@ public class PurchaseTrackingVO {
     private String oaUrl;
 
     /** 送货单图片路径（空串 = 还没到货） */
+    /** 单据类型（CGSQ / FWCGSQ / ZCSG） */
+    private String orderType;
+
+    /** 验收单号（空 = 未验收） */
+    private String acceptanceNo;
+
+    /** 验收单链接 */
+    private String acceptanceUrl;
+
+    /** 是否已验收：由 acceptanceNo 推导，避免再存一列冗余（2026-11-09） */
+    private Boolean accepted;
+
     private String deliveryNote;
 
     /** 实际到货数量（NULL = 未记；< quantity 即部分到货） */

@@ -118,6 +118,15 @@ public class PurchaseTracking {
 
     /** 送货单图片路径（还没到货时空串；变更-094 起是图片，老数据可能是文本） */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    /** 单据类型：CGSQ 采购申请 / FWCGSQ 服务采购申请 / ZCSG 资产申购（2026-11-09） */
+    private String orderType;
+
+    /** 验收单号；有值即"已验收"（CGSQ 一般没有验收单） */
+    private String acceptanceNo;
+
+    /** 验收单链接，点了直接跳到 OA/ERP 那张单 */
+    private String acceptanceUrl;
+
     private String deliveryNote;
 
     /** 实际到货数量（变更-096 起；< quantity 即部分到货） */

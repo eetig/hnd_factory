@@ -66,7 +66,8 @@ public class PurchaseTrackingServiceImpl
         // 变更-118：多选优先，单值只做兼容（老前端还发 status）
         Set<PurchaseTrackingStatus> statusFilters = parseStatuses(query.getStatuses(), query.getStatus());
         LambdaQueryWrapper<PurchaseTracking> wrapper = filterOf(query.getKeyword(),
-                query.parsedStartDate(), query.parsedEndDate(), query.getCategory());
+                query.parsedStartDate(), query.parsedEndDate(), query.getCategory(),
+                query.getOrderType(), query.getAccepted());
 
         // 没按状态筛：走正常的后端分页（快路径，绝大部分请求都在这条路上）
         if (statusFilters.isEmpty()) {
@@ -180,7 +181,7 @@ public class PurchaseTrackingServiceImpl
     @Override
     public PurchaseTrackingSummaryVO summary(PurchaseTrackingSummaryQueryDTO query) {
         List<PurchaseTracking> rows = baseMapper.selectList(
-                filterOf(query.getKeyword(), query.parsedStartDate(), query.parsedEndDate(), query.getCategory()));
+                filterOf(query.getKeyword(), query.parsedStartDate(), query.parsedEndDate(), query.getCategory(), null, null));
 
         LocalDate today = LocalDate.now();
         PurchaseTrackingSummaryVO summary = new PurchaseTrackingSummaryVO();
@@ -220,7 +221,7 @@ public class PurchaseTrackingServiceImpl
      * 各自写一份的话，最典型的后果是「顶栏说超期 3 条、列表筛出 5 条」。
      */
     private LambdaQueryWrapper<PurchaseTracking> filterOf(String keyword, LocalDate start, LocalDate end,
-                                                          String category) {
+                                                          String category, String orderType, Boolean accepted) {
         LambdaQueryWrapper<PurchaseTracking> wrapper = new LambdaQueryWrapper<>();
 
         String trimmedKeyword = trimToNull(keyword);
@@ -248,6 +249,20 @@ public class PurchaseTrackingServiceImpl
         String trimmedCategory = trimToNull(category);
         if (trimmedCategory != null) {
             wrapper.eq(PurchaseTracking::getCategory, trimmedCategory);
+        }
+
+        // 单据类型筛选（2026-11-09）：CGSQ / FWCGSQ / ZCSG
+        String trimmedOrderType = trimToNull(orderType);
+        if (trimmedOrderType != null) {
+            wrapper.eq(PurchaseTracking::getOrderType, trimmedOrderType);
+        }
+
+        // 验收状态筛选：已验收 = 验收单号非空。不存冗余列，口径只有一处（2026-11-09）
+        if (Boolean.TRUE.equals(accepted)) {
+            wrapper.isNotNull(PurchaseTracking::getAcceptanceNo).ne(PurchaseTracking::getAcceptanceNo, "");
+        } else if (Boolean.FALSE.equals(accepted)) {
+            wrapper.and(w -> w.isNull(PurchaseTracking::getAcceptanceNo)
+                    .or().eq(PurchaseTracking::getAcceptanceNo, ""));
         }
         return wrapper;
     }
@@ -299,6 +314,9 @@ public class PurchaseTrackingServiceImpl
         row.setMaterialCode(blankIfNull(dto.getMaterialCode()));
         row.setOaNo(blankIfNull(dto.getOaNo()));
         row.setOaUrl(blankIfNull(dto.getOaUrl()));
+        row.setOrderType(trimToNull(dto.getOrderType()));
+        row.setAcceptanceNo(trimToNull(dto.getAcceptanceNo()));
+        row.setAcceptanceUrl(trimToNull(dto.getAcceptanceUrl()));
         row.setDeliveryNote(blankIfNull(dto.getDeliveryNote()));
         // 可空的几列保持 null 语义（清空时真的写 NULL，靠实体的 ALWAYS 策略）
         row.setSpec(trimToNull(dto.getSpec()));
@@ -480,6 +498,11 @@ public class PurchaseTrackingServiceImpl
         vo.setSpec(row.getSpec());
         vo.setPurpose(row.getPurpose());
         vo.setCategory(row.getCategory());
+        vo.setOrderType(row.getOrderType());
+        vo.setAcceptanceNo(row.getAcceptanceNo());
+        vo.setAcceptanceUrl(row.getAcceptanceUrl());
+        // 有验收单号 = 已验收（推导，不存列）
+        vo.setAccepted(row.getAcceptanceNo() != null && !row.getAcceptanceNo().isBlank());
         vo.setQuantity(row.getQuantity());
         vo.setUnit(row.getUnit());
         vo.setRequiredArrivalDate(row.getRequiredArrivalDate());

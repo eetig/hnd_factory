@@ -3931,3 +3931,15 @@ CREATE TABLE IF NOT EXISTS `equipment_tank` (
   KEY `idx_tank_workshop` (`workshop`)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='储罐实例（一个罐绑定一张图纸，几何从图纸带出）';
+
+-- 采购单据类型 + 验收单据（2026-11-09）
+-- 使用方：三种单据 CGSQ（采购申请，无验收单）、FWCGSQ（服务采购申请）、ZCSG（资产申购）；
+-- 后两种采购完成后会生成验收单据，他要能录"验收单号 + 链接"，方便一键跳过去看。
+-- 不加"验收状态"列：有验收单号即已验收（冗余列迟早两处不一致）。
+ALTER TABLE `purchase_tracking`
+  ADD COLUMN `order_type` varchar(16) DEFAULT NULL COMMENT '单据类型：CGSQ 采购申请 / FWCGSQ 服务采购申请 / ZCSG 资产申购' AFTER `oa_url`,
+  ADD COLUMN `acceptance_no` varchar(64) DEFAULT NULL COMMENT '验收单号（CGSQ 一般没有）' AFTER `order_type`,
+  ADD COLUMN `acceptance_url` varchar(512) DEFAULT NULL COMMENT '验收单链接（OA/ERP 单据页）' AFTER `acceptance_no`;
+
+ALTER TABLE `purchase_tracking`
+  ADD KEY `idx_purchase_order_type` (`order_type`);

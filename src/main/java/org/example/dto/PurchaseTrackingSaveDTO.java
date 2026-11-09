@@ -74,6 +74,15 @@ public class PurchaseTrackingSaveDTO {
 
     /** 送货单图片路径（还没到货时留空，≤64） */
     @Size(max = 64, message = "送货单最多 64 个字")
+    @Size(max = 16, message = "单据类型最多 16 字")
+    private String orderType;
+
+    @Size(max = 64, message = "验收单号最多 64 字")
+    private String acceptanceNo;
+
+    @Size(max = 512, message = "验收单链接最多 512 字")
+    private String acceptanceUrl;
+
     private String deliveryNote;
 
     /** 实际到货数量（变更-096 起，可空；不能大于 quantity，见 ServiceImpl 的校验） */

@@ -46,4 +46,10 @@ public class PurchaseTrackingQueryDTO extends PageQueryDTO {
 
     /** 类别筛选（备件/五金 / 原料 / 设备 / 其他），空白表示不限 */
     private String category;
+
+    /** 单据类型筛选：CGSQ / FWCGSQ / ZCSG（2026-11-09） */
+    private String orderType;
+
+    /** 验收状态筛选：true 只看已验收 / false 只看未验收 / null 不过滤 */
+    private Boolean accepted;
 }
