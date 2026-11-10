@@ -62,6 +62,21 @@ public class PurchaseTrackingServiceImpl
     private ImgFeignClient imgFeignClient;
 
     @Override
+    public java.util.List<String> categories() {
+        // 用 QueryWrapper 的 selectObjs 取去重值：一条 SQL，不加载整表
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<PurchaseTracking> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        wrapper.select("DISTINCT category")
+                .isNotNull("category")
+                .ne("category", "")
+                .orderByAsc("category");
+        return baseMapper.selectObjs(wrapper).stream()
+                .filter(java.util.Objects::nonNull)
+                .map(String::valueOf)
+                .toList();
+    }
+
+    @Override
     public IPage<PurchaseTrackingVO> listPage(PurchaseTrackingQueryDTO query) {
         // 变更-118：多选优先，单值只做兼容（老前端还发 status）
         Set<PurchaseTrackingStatus> statusFilters = parseStatuses(query.getStatuses(), query.getStatus());
@@ -317,6 +332,8 @@ public class PurchaseTrackingServiceImpl
         row.setOrderType(trimToNull(dto.getOrderType()));
         row.setAcceptanceNo(trimToNull(dto.getAcceptanceNo()));
         row.setAcceptanceUrl(trimToNull(dto.getAcceptanceUrl()));
+        row.setPoNo(trimToNull(dto.getPoNo()));
+        row.setPoUrl(trimToNull(dto.getPoUrl()));
         row.setDeliveryNote(blankIfNull(dto.getDeliveryNote()));
         // 可空的几列保持 null 语义（清空时真的写 NULL，靠实体的 ALWAYS 策略）
         row.setSpec(trimToNull(dto.getSpec()));
@@ -501,6 +518,8 @@ public class PurchaseTrackingServiceImpl
         vo.setOrderType(row.getOrderType());
         vo.setAcceptanceNo(row.getAcceptanceNo());
         vo.setAcceptanceUrl(row.getAcceptanceUrl());
+        vo.setPoNo(row.getPoNo());
+        vo.setPoUrl(row.getPoUrl());
         // 有验收单号 = 已验收（推导，不存列）
         vo.setAccepted(row.getAcceptanceNo() != null && !row.getAcceptanceNo().isBlank());
         vo.setQuantity(row.getQuantity());

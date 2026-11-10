@@ -76,6 +76,12 @@ public class PurchaseTrackingVO {
     /** 验收单链接 */
     private String acceptanceUrl;
 
+    /** 采购单号（空 = 还没生成采购单） */
+    private String poNo;
+
+    /** 采购单链接 */
+    private String poUrl;
+
     /** 是否已验收：由 acceptanceNo 推导，避免再存一列冗余（2026-11-09） */
     private Boolean accepted;
 

@@ -34,4 +34,12 @@ public interface PurchaseTrackingService {
 
     /** 删除一条 */
     void delete(Long id);
+
+    /**
+     * 库里已经用过的类别（去重，2026-11-09）。
+     *
+     * 使用方要「类别可以自己填，保存后下次出现在下拉里」——
+     * 固定枚举做不到这点，所以下拉 = 基础项 ∪ 这张表里出现过的值。
+     */
+    java.util.List<String> categories();
 }

@@ -3943,3 +3943,9 @@ ALTER TABLE `purchase_tracking`
 
 ALTER TABLE `purchase_tracking`
   ADD KEY `idx_purchase_order_type` (`order_type`);
+
+-- 采购单（2026-11-10）：使用方要「采购单 + 验收单」各存各的单号与链接。
+-- po_no 指采购申请批完后 OA 那张采购订单；purchase_order_no 历史上是 OA 提单号，别再混用。
+ALTER TABLE `purchase_tracking`
+  ADD COLUMN `po_no` varchar(64) DEFAULT NULL COMMENT '采购单号（OA 采购订单）' AFTER `acceptance_url`,
+  ADD COLUMN `po_url` varchar(512) DEFAULT NULL COMMENT '采购单链接' AFTER `po_no`;

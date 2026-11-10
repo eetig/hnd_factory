@@ -127,6 +127,20 @@ public class PurchaseTracking {
     /** 验收单链接，点了直接跳到 OA/ERP 那张单 */
     private String acceptanceUrl;
 
+    /**
+     * 采购单号（2026-11-10）。指的是采购申请批完之后 OA 里那张**采购订单**，
+     * 与 {@link #oaNo}（采购申请单）是两张不同的单。
+     *
+     * <p>物理列叫 {@code po_no} 而不是 {@code purchase_no}：{@code purchase_order_no}
+     * 这一列历史上已经是 OA 提单号（见 oaNo 的注释），再叫 purchase_* 只会更乱。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String poNo;
+
+    /** 采购单链接（可空）：从浏览器地址栏复制整条 URL，点单号直达 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String poUrl;
+
     private String deliveryNote;
 
     /** 实际到货数量（变更-096 起；< quantity 即部分到货） */

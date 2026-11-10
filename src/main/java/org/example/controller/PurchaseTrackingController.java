@@ -60,6 +60,17 @@ public class PurchaseTrackingController {
      * <p>{@code pageNum} / {@code pageSize} 必传，缺参由全局异常处理回 400
      * （理由见 {@link org.example.dto.PageQueryDTO}：给默认值会让老客户端安静地只拿到第 1 页）。
      */
+    /**
+     * 已用过的类别（2026-11-09）。
+     *
+     * 前端类别下拉 = 固定基础项 ∪ 这里返回的历史值，
+     * 所以他随手填一个新类别，保存后下次就在下拉里。
+     */
+    @GetMapping("/categories")
+    public Result<java.util.List<String>> categories() {
+        return Result.success(purchaseTrackingService.categories());
+    }
+
     @GetMapping("/list")
     public PageResult<PurchaseTrackingVO> list(@Valid PurchaseTrackingQueryDTO query) {
         IPage<PurchaseTrackingVO> page = purchaseTrackingService.listPage(query);

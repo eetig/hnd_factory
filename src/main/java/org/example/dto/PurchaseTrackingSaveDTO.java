@@ -83,6 +83,14 @@ public class PurchaseTrackingSaveDTO {
     @Size(max = 512, message = "验收单链接最多 512 字")
     private String acceptanceUrl;
 
+    /** 采购单号（采购申请之后的 OA 采购订单，可空，≤64） */
+    @Size(max = 64, message = "采购单号最多 64 字")
+    private String poNo;
+
+    /** 采购单链接（可空，≤512） */
+    @Size(max = 512, message = "采购单链接最多 512 字")
+    private String poUrl;
+
     private String deliveryNote;
 
     /** 实际到货数量（变更-096 起，可空；不能大于 quantity，见 ServiceImpl 的校验） */
