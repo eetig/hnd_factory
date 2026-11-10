@@ -82,7 +82,7 @@ public class PurchaseTrackingServiceImpl
         Set<PurchaseTrackingStatus> statusFilters = parseStatuses(query.getStatuses(), query.getStatus());
         LambdaQueryWrapper<PurchaseTracking> wrapper = filterOf(query.getKeyword(),
                 query.parsedStartDate(), query.parsedEndDate(), query.getCategory(),
-                query.getOrderType(), query.getAccepted());
+                query.getOrderType(), query.getOrderTypes(), query.getAccepted());
 
         // 没按状态筛：走正常的后端分页（快路径，绝大部分请求都在这条路上）
         if (statusFilters.isEmpty()) {
@@ -196,7 +196,8 @@ public class PurchaseTrackingServiceImpl
     @Override
     public PurchaseTrackingSummaryVO summary(PurchaseTrackingSummaryQueryDTO query) {
         List<PurchaseTracking> rows = baseMapper.selectList(
-                filterOf(query.getKeyword(), query.parsedStartDate(), query.parsedEndDate(), query.getCategory(), null, null));
+                filterOf(query.getKeyword(), query.parsedStartDate(), query.parsedEndDate(), query.getCategory(),
+                        null, null, null));
 
         LocalDate today = LocalDate.now();
         PurchaseTrackingSummaryVO summary = new PurchaseTrackingSummaryVO();
@@ -236,7 +237,8 @@ public class PurchaseTrackingServiceImpl
      * 各自写一份的话，最典型的后果是「顶栏说超期 3 条、列表筛出 5 条」。
      */
     private LambdaQueryWrapper<PurchaseTracking> filterOf(String keyword, LocalDate start, LocalDate end,
-                                                          String category, String orderType, Boolean accepted) {
+                                                          String category, String orderType,
+                                                          java.util.List<String> orderTypes, Boolean accepted) {
         LambdaQueryWrapper<PurchaseTracking> wrapper = new LambdaQueryWrapper<>();
 
         String trimmedKeyword = trimToNull(keyword);
@@ -267,8 +269,33 @@ public class PurchaseTrackingServiceImpl
         }
 
         // 单据类型筛选（2026-11-09）：CGSQ / FWCGSQ / ZCSG
+        // 多选优先（2026-11-10 费用申请看板）：一张看板要同时看 ZCSG + FWCGSQ
         String trimmedOrderType = trimToNull(orderType);
-        if (trimmedOrderType != null) {
+        java.util.List<String> trimmedOrderTypes = orderTypes == null ? java.util.List.of()
+                : orderTypes.stream().map(String::trim).filter(v -> !v.isEmpty()).distinct().toList();
+        if (!trimmedOrderTypes.isEmpty()) {
+            /*
+             * 类型**可以空着**（历史数据全空，2026-11-10 实测 12 行 order_type 都是 NULL），
+             * 空的时候按 OA 单号推断 —— 与前端 `effectiveOrderType` 同一套顺序：
+             * FWCGSQ > ZCSG > CGSQ。
+             *
+             * 为什么非要推断：只 `in(order_type, …)` 的话这些行在费用申请页
+             * **一条都不出现**（库里没值），使用方看到的是"我这单没了"。
+             * 也不在前端过滤：那张表迟早会涨，前端过滤等于把整表拉到浏览器里筛。
+             */
+            StringBuilder expr = new StringBuilder("(COALESCE(NULLIF(order_type, ''), CASE")
+                    // ⚠️ 物理列叫 purchase_order_no（历史上就是 OA 提单号），不是 oa_no —— 写错直接 500
+                    .append(" WHEN UPPER(purchase_order_no) LIKE '%FWCGSQ%' THEN 'FWCGSQ'")
+                    .append(" WHEN UPPER(purchase_order_no) LIKE '%ZCSG%' THEN 'ZCSG'")
+                    .append(" WHEN UPPER(purchase_order_no) LIKE '%CGSQ%' THEN 'CGSQ'")
+                    .append(" ELSE '' END) IN (");
+            for (int i = 0; i < trimmedOrderTypes.size(); i++) {
+                if (i > 0) expr.append(", ");
+                expr.append('{').append(i).append('}');
+            }
+            expr.append("))");
+            wrapper.apply(expr.toString(), trimmedOrderTypes.toArray());
+        } else if (trimmedOrderType != null) {
             wrapper.eq(PurchaseTracking::getOrderType, trimmedOrderType);
         }
 

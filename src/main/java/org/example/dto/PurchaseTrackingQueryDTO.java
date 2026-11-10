@@ -50,6 +50,16 @@ public class PurchaseTrackingQueryDTO extends PageQueryDTO {
     /** 单据类型筛选：CGSQ / FWCGSQ / ZCSG（2026-11-09） */
     private String orderType;
 
+    /**
+     * 单据类型**多选**（2026-11-10，费用申请看板）。
+     *
+     * <p>费用申请看板 = 资产申购(ZCSG) + 服务采购申请(FWCGSQ) 两类单据，
+     * 只发单值 {@code orderType} 得拉两次再在前端合并，分页与去重都会变复杂。
+     * 绑定方式与 {@code statuses} 一致：重复查询参数（{@code ?orderTypes=ZCSG&orderTypes=FWCGSQ}）。
+     * 非空时以它为准，单值 {@code orderType} 保留兼容。
+     */
+    private java.util.List<String> orderTypes;
+
     /** 验收状态筛选：true 只看已验收 / false 只看未验收 / null 不过滤 */
     private Boolean accepted;
 }
