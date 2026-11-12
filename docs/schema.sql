@@ -3949,3 +3949,26 @@ ALTER TABLE `purchase_tracking`
 ALTER TABLE `purchase_tracking`
   ADD COLUMN `po_no` varchar(64) DEFAULT NULL COMMENT '采购单号（OA 采购订单）' AFTER `acceptance_url`,
   ADD COLUMN `po_url` varchar(512) DEFAULT NULL COMMENT '采购单链接' AFTER `po_no`;
+
+-- 领料解析模板（2026-11-12）
+-- 使用方原话：领料单是纸质单据，他要拍照 → 识别物料编码 + 领料部门 → 按部门套对应 SAP 模板
+-- → 导出 Excel → 复制粘贴进 SAP。模板来源是"他把 SAP 里导出的空 Excel 传上来"，
+-- 所以列位置不能写死：上传时读表头自动认列，存成 JSON 映射。
+-- 文件存 longblob（一张模板几十 KB），不落共享卷：容器重建不丢，也不用动挂载。
+CREATE TABLE IF NOT EXISTS `pick_template` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `name` varchar(64) NOT NULL COMMENT '模板名（用户自己起，如 P7单资产领用）',
+  `doc_type` varchar(64) DEFAULT NULL COMMENT '单据类型（如 资产领用/维修物资领料），同部门可能多张',
+  `dept` varchar(64) DEFAULT NULL COMMENT '领料部门；为空表示通用模板',
+  `header_row` int NOT NULL DEFAULT 0 COMMENT '表头所在行（0 基）',
+  `data_start_row` int NOT NULL DEFAULT 1 COMMENT '数据起始行（0 基）',
+  `col_map` varchar(512) NOT NULL COMMENT '列映射 JSON：material/qty/unit/factory/warehouse 对应列号',
+  `file_name` varchar(255) DEFAULT NULL COMMENT '原始文件名',
+  `file_data` longblob COMMENT '模板 xlsx 原始字节（含示例行，示例行用于取工厂/仓库默认值）',
+  `enabled` tinyint NOT NULL DEFAULT 1 COMMENT '1 启用 0 停用',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_pick_template_dept` (`dept`),
+  KEY `idx_pick_template_doc_type` (`doc_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='领料解析：SAP 导入模板（列映射 + 原文件）';

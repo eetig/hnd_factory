@@ -56,7 +56,10 @@ public class SaTokenConfigure implements WebMvcConfigurer {
      * （只改前端 = 数据仍公开；只改后端 = 注册用户点进去满屏 401）。
      */
     private static final String[] LOGIN_READ_PATTERNS = {
-            "/api/work-order/**", "/api/pick/**", "/api/inbound/**", "/api/goods-move/**"};
+            "/api/work-order/**", "/api/pick/**", "/api/inbound/**", "/api/goods-move/**",
+            // 领料解析：导出结果里有部门名与物料清单，不该匿名可拉；仓库/采购相关的人都要能用，
+            // 所以放在「登录即可读」这一档（写操作仍是 admin，见闸门 1）。
+            "/api/pick-template/**"};
 
     @Autowired
     private org.example.audit.AuditInterceptor auditInterceptor;
