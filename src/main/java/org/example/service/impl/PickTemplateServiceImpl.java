@@ -62,6 +62,16 @@ public class PickTemplateServiceImpl implements PickTemplateService {
     private static final List<String> FACTORY_ALIASES = List.of("工厂");
     private static final List<String> WAREHOUSE_ALIASES = List.of("仓库");
 
+    /**
+     * 工厂/仓库兜底值。
+     *
+     * <p>P7 那份模板在示例行里预填了 1503 / 9001，直接照抄即可；但 E1/E5/E6 三份模板的数据区是**空的**
+     * （使用方导出来就是干净的空单），读不到示例值。这时不能留空 —— SAP 里工厂/仓库为空的行贴不进去，
+     * 等于导出白做。所以按公司实际值兜底，界面上也会把这组值显示出来，便于发现不对。
+     */
+    private static final String DEFAULT_FACTORY = "1503";
+    private static final String DEFAULT_WAREHOUSE = "9001";
+
     @Autowired
     private PickTemplateMapper pickTemplateMapper;
 
@@ -175,6 +185,12 @@ public class PickTemplateServiceImpl implements PickTemplateService {
                 wb.setSheetName(i, sheetName(depts.get(i)));
             }
             String[] defaults = readDefaults(wb.getSheetAt(0), cols, t.getDataStartRow());
+            if (!StringUtils.hasText(defaults[0])) {
+                defaults[0] = DEFAULT_FACTORY;
+            }
+            if (!StringUtils.hasText(defaults[1])) {
+                defaults[1] = DEFAULT_WAREHOUSE;
+            }
             for (int i = 0; i < depts.size(); i++) {
                 fillSheet(wb.getSheetAt(i), cols, t.getDataStartRow(), defaults, byDept.get(depts.get(i)));
             }
@@ -376,8 +392,13 @@ public class PickTemplateServiceImpl implements PickTemplateService {
         appendCol(sb, "仓库", cols.get("warehouse"));
         vo.setColumns(sb.toString());
         if (defaults != null) {
-            vo.setFactory(defaults[0]);
-            vo.setWarehouse(defaults[1]);
+            vo.setFactory(StringUtils.hasText(defaults[0]) ? defaults[0] : DEFAULT_FACTORY);
+            vo.setWarehouse(StringUtils.hasText(defaults[1]) ? defaults[1] : DEFAULT_WAREHOUSE);
+        } else {
+            // 列表接口不解析模板文件（几十 KB × N 张，没必要为了一行提示反复读 blob），
+            // 直接把导出时实际会写的兜底值告诉界面，免得「界面显示空、导出却有值」这种不一致。
+            vo.setFactory(DEFAULT_FACTORY);
+            vo.setWarehouse(DEFAULT_WAREHOUSE);
         }
         return vo;
     }
