@@ -139,6 +139,9 @@ public class ElectricityBillController {
         Map<String, BigDecimal> lastPeriodColumns = null;
         int lastPeriodDays = 0;
         BigDecimal lastDailyTotal = BigDecimal.ZERO;
+        // 第一期（dateList[0] → dateList[1]）的日量：月初缺口要按紧邻那期补，不能用更早的长周期
+        Map<String, BigDecimal> firstPeriodColumns = null;
+        int firstPeriodDays = 0;
 
         for (int i = 1; i < dateList.size(); i++) {
             LocalDate periodStart = dateList.get(i - 1);
@@ -186,6 +189,37 @@ public class ElectricityBillController {
             lastPeriodDays = (int) periodDays;
             lastDailyTotal = columns.getOrDefault("总电量", BigDecimal.ZERO)
                     .divide(BigDecimal.valueOf(periodDays), 4, RoundingMode.HALF_UP);
+            if (firstPeriodColumns == null) {
+                firstPeriodColumns = columns;
+                firstPeriodDays = (int) periodDays;
+            }
+        }
+
+        /*
+         * 月初补（2026-11-13 使用方：「算法链确定没问题吗，1-30 号都算了吗」）。
+         *
+         * 循环是从 dateList[1] 开始的，所以 dateList[0] 之前那一期永远不存在：
+         * 只要本月第一次抄表不在 1 号，1 号到那之前就是空白。
+         * 2026-11 就是这个情况 —— 1 号总表上一期抄在 09-04，程序只按区间里出现的
+         * 抄表日配对，11-01~11-05 这 5 天既不在这张账单里、也没在 10 月账单里。
+         *
+         * 补法用**第一期（11-06 → 11-13）的日均**，不用 09-04 → 11-06 那 63 天的日均：
+         * 那 63 天里工厂停过工（约 4074 度/天），拿它摊 5 天会把 11 月凭空抬高 2 万度。
+         * 与月末补对称：头按紧邻那期，尾按最后一期。
+         */
+        LocalDate firstDate = dateList.get(0);
+        long headDays = customRange ? 0 : Math.max(0, ChronoUnit.DAYS.between(start, firstDate));
+        Map<String, BigDecimal> headByColumn = new LinkedHashMap<>();
+        for (String column : doneByColumn.keySet()) {
+            headByColumn.put(column, BigDecimal.ZERO);
+        }
+        if (headDays > 0 && firstPeriodColumns != null && firstPeriodDays > 0) {
+            for (Map.Entry<String, BigDecimal> entry : firstPeriodColumns.entrySet()) {
+                BigDecimal daily = entry.getValue()
+                        .divide(BigDecimal.valueOf(firstPeriodDays), 6, RoundingMode.HALF_UP);
+                headByColumn.put(entry.getKey(),
+                        daily.multiply(BigDecimal.valueOf(headDays)).setScale(2, RoundingMode.HALF_UP));
+            }
         }
 
         // ---- 月末补（只有自然月才补；自定义区间不补）----
@@ -206,8 +240,10 @@ public class ElectricityBillController {
 
         // ---- 预估：基数 = 总电量（1 号表）----
         BigDecimal doneTotal = doneByColumn.getOrDefault("总电量", BigDecimal.ZERO);
+        BigDecimal headTotal = headByColumn.getOrDefault("总电量", BigDecimal.ZERO);
         BigDecimal tailTotal = tailByColumn.getOrDefault("总电量", BigDecimal.ZERO);
-        BigDecimal estimateTotal = doneTotal.add(tailTotal).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal estimateTotal = doneTotal.add(headTotal).add(tailTotal)
+                .setScale(2, RoundingMode.HALF_UP);
 
         BigDecimal advanceKwh = estimateTotal.multiply(BUFFER).setScale(2, RoundingMode.HALF_UP);
 
@@ -235,6 +271,7 @@ public class ElectricityBillController {
             BigDecimal sum = BigDecimal.ZERO;
             for (String column : entry.getValue()) {
                 sum = sum.add(doneByColumn.getOrDefault(column, BigDecimal.ZERO));
+                sum = sum.add(headByColumn.getOrDefault(column, BigDecimal.ZERO));
                 sum = sum.add(tailByColumn.getOrDefault(column, BigDecimal.ZERO));
             }
             BigDecimal value = sum.setScale(2, RoundingMode.HALF_UP);
@@ -317,12 +354,15 @@ public class ElectricityBillController {
         data.put("to", end.toString());
         data.put("customRange", customRange);
         data.put("lastDate", lastDate.toString());
+        data.put("headDays", headDays);
+        data.put("headByColumn", headByColumn);
         data.put("tailDays", tailDays);
         data.put("lastDailyKwh", lastDailyTotal);
         data.put("periods", periodRows);
         data.put("doneByColumn", doneByColumn);
         data.put("tailByColumn", tailByColumn);
         data.put("doneTotal", doneTotal);
+        data.put("headTotal", headTotal);
         data.put("tailTotal", tailTotal);
         data.put("estimateKwh", estimateTotal);
         data.put("advanceKwh", advanceKwh);
