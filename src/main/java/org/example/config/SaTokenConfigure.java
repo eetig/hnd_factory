@@ -59,7 +59,10 @@ public class SaTokenConfigure implements WebMvcConfigurer {
             "/api/work-order/**", "/api/pick/**", "/api/inbound/**", "/api/goods-move/**",
             // 领料解析：导出结果里有部门名与物料清单，不该匿名可拉；仓库/采购相关的人都要能用，
             // 所以放在「登录即可读」这一档（写操作仍是 admin，见闸门 1）。
-            "/api/pick-template/**"};
+            "/api/pick-template/**",
+            // 手机端领料单队列：手机发、电脑取。同样只在「登录」这一档，
+            // 匿名不该看到厂里哪个部门在领什么料。
+            "/api/pick-order/**"};
 
     @Autowired
     private org.example.audit.AuditInterceptor auditInterceptor;
