@@ -7,6 +7,7 @@ import org.example.entity.ElectricityMeter;
 import org.example.exception.BusinessException;
 import org.example.service.ElectricityService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -144,6 +146,29 @@ public class ElectricityController {
     public Result<List<String>> sections() {
         requireLogin();
         return Result.success(electricityService.sections());
+    }
+
+    /**
+     * 改一条已抄的读数（抄错字用）。
+     *
+     * <p>body: { "reading": 608 }
+     *
+     * <p>为什么读数谁都能改：现场抄错的是抄表的人自己发现的，让他去找管理员才能改，
+     * 只会让错数据多留几天。改完会连带重算同表下一条的用量（见 Service 注释），
+     * 且这次修改会进审计日志。
+     */
+    @PutMapping("/readings/{id}")
+    public Result<Map<String, Object>> updateReading(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        requireLogin();
+        BigDecimal reading = electricityService.toDecimal(body == null ? null : body.get("reading"));
+        return Result.success(electricityService.updateReading(id, reading));
+    }
+
+    /** 删一条抄错的读数（那天根本没抄，手滑多录了一条）。删掉会重算下一条，只给管理员 */
+    @DeleteMapping("/readings/{id}")
+    public Result<Map<String, Object>> deleteReading(@PathVariable Long id) {
+        requireAdmin();
+        return Result.success(electricityService.deleteReading(id));
     }
 
     private static void requireLogin() {

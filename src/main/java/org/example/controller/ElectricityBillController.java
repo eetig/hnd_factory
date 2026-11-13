@@ -298,6 +298,7 @@ public class ElectricityBillController {
             }
             ElectricityMeter meter = meterByNo.get(no);
             Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", reading.getId());
             row.put("meterNo", no);
             row.put("meterName", meter == null ? "" : meter.getMeterName());
             row.put("column", columnByMeter.get(no));

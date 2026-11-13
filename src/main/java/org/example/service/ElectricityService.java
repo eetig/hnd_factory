@@ -270,6 +270,129 @@ public class ElectricityService {
         return out;
     }
 
+    // ==================== 改 / 删已抄读数（2026-11-13） ====================
+
+    /**
+     * 改一条已抄读数（抄错字用）。
+     *
+     * <h2>为什么不只改 reading</h2>
+     * 用量是「本次 − 上次」算出来的，而同一块表**下一条**记录的「上次读数」也指着这一行。
+     * 所以改一个字会同时错两个区间：本期用量，和下一期用量。这里把两行一起重算，
+     * 否则改完 13 号表，下一条会凭空多出/少掉几千度。
+     */
+    @Transactional
+    public Map<String, Object> updateReading(Long id, BigDecimal reading) {
+        if (id == null) {
+            throw new BusinessException("缺少要改的那条读数");
+        }
+        if (reading == null || reading.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("请填正确的读数");
+        }
+        ElectricityReading row = readingMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException("这条读数不存在（可能已被删除）");
+        }
+        ElectricityMeter meter = meterMapper.selectById(row.getMeterId());
+        if (meter == null) {
+            throw new BusinessException("这块表不存在");
+        }
+        BigDecimal before = row.getReading();
+        row.setReading(reading);
+        fillPrevAndUsage(row, meter);
+        readingMapper.updateById(row);
+        recomputeNext(row, meter);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", row.getId());
+        out.put("before", before);
+        out.put("reading", row.getReading());
+        out.put("prevReading", row.getPrevReading());
+        out.put("usageQty", row.getUsageQty());
+        return out;
+    }
+
+    /**
+     * 删一条抄错的读数（例如那天根本没抄，是手滑多录了一条）。
+     *
+     * <p>删掉之后，同一块表的**下一条**要把「上次读数」接回被删行的上次读数，
+     * 用量按新的差值重算 —— 否则那一期会横跨两期，用量翻倍。
+     */
+    @Transactional
+    public Map<String, Object> deleteReading(Long id) {
+        if (id == null) {
+            throw new BusinessException("缺少要删的那条读数");
+        }
+        ElectricityReading row = readingMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException("这条读数不存在（可能已被删除）");
+        }
+        ElectricityMeter meter = meterMapper.selectById(row.getMeterId());
+        readingMapper.deleteById(id);
+
+        if (meter != null) {
+            ElectricityReading next = nextReading(row.getMeterId(), row.getReadDate());
+            if (next != null) {
+                next.setPrevReading(row.getPrevReading());
+                next.setUsageQty(usageOf(next.getReading(), row.getPrevReading(), meter));
+                readingMapper.updateById(next);
+            }
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deleted", id);
+        out.put("meterId", row.getMeterId());
+        out.put("readDate", row.getReadDate() == null ? null : row.getReadDate().toString());
+        return out;
+    }
+
+    /** 取同表上一条（按日期） */
+    private ElectricityReading prevReading(Long meterId, LocalDate date) {
+        return readingMapper.selectOne(new LambdaQueryWrapper<ElectricityReading>()
+                .eq(ElectricityReading::getMeterId, meterId)
+                .lt(ElectricityReading::getReadDate, date)
+                .orderByDesc(ElectricityReading::getReadDate)
+                .last("limit 1"));
+    }
+
+    /** 取同表下一条（按日期） */
+    private ElectricityReading nextReading(Long meterId, LocalDate date) {
+        return readingMapper.selectOne(new LambdaQueryWrapper<ElectricityReading>()
+                .eq(ElectricityReading::getMeterId, meterId)
+                .gt(ElectricityReading::getReadDate, date)
+                .orderByAsc(ElectricityReading::getReadDate)
+                .last("limit 1"));
+    }
+
+    /** 按库里真实的上一条，重算这一行的 prev_reading 与 usage_qty */
+    private void fillPrevAndUsage(ElectricityReading row, ElectricityMeter meter) {
+        ElectricityReading prev = row.getReadDate() == null ? null : prevReading(row.getMeterId(), row.getReadDate());
+        BigDecimal prevValue = prev == null ? null : prev.getReading();
+        row.setPrevReading(prevValue);
+        row.setUsageQty(usageOf(row.getReading(), prevValue, meter));
+    }
+
+    /** 改完这一行，把下一条的「上次读数」和用量接上 */
+    private void recomputeNext(ElectricityReading row, ElectricityMeter meter) {
+        ElectricityReading next = row.getReadDate() == null ? null : nextReading(row.getMeterId(), row.getReadDate());
+        if (next == null) {
+            return;
+        }
+        next.setPrevReading(row.getReading());
+        next.setUsageQty(usageOf(next.getReading(), row.getReading(), meter));
+        readingMapper.updateById(next);
+    }
+
+    /** 用量 =（本次 − 上次）× 倍率；没有上次读数时按 0 记（口径与批量保存一致） */
+    private static BigDecimal usageOf(BigDecimal reading, BigDecimal prev, ElectricityMeter meter) {
+        if (reading == null || prev == null) {
+            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        int mult = meter.getMultiplier() == null ? 1 : meter.getMultiplier();
+        return reading.subtract(prev)
+                .multiply(BigDecimal.valueOf(mult))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
     private static String str(Object value) {
         return value == null ? "" : String.valueOf(value);
     }
@@ -285,7 +408,7 @@ public class ElectricityService {
         }
     }
 
-    private static BigDecimal toDecimal(Object value) {
+    public static BigDecimal toDecimal(Object value) {
         if (value == null || String.valueOf(value).isBlank()) {
             return null;
         }
