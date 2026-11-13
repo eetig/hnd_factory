@@ -266,7 +266,52 @@ public class ElectricityBillController {
             shares.add(row);
         }
 
+        /*
+         * 本期分表明细（2026-11-13 使用方：「这个计算过程不够直观，我想查找这个算出
+         * 负值的原因，毫无头绪」）。
+         *
+         * 负值的唯一来源是「其它 = 总电量 − 八项分表」这个倒挤项：某一块分表读数跳一下，
+         * 八列之和就会超过总表，其它必然变负，再被月末补按日外推放大，最后整组都成负数。
+         * 所以要把"哪块表把哪一列顶上去"这件事原样交给页面，不要让人自己反推。
+         */
+        Map<Integer, String> columnByMeter = new LinkedHashMap<>();
+        for (Map.Entry<String, List<Integer>> entry : COLUMNS.entrySet()) {
+            if ("总电量".equals(entry.getKey())) {
+                continue;
+            }
+            for (Integer no : entry.getValue()) {
+                columnByMeter.putIfAbsent(no, entry.getKey());
+            }
+        }
+        Map<Integer, ElectricityMeter> meterByNo = new LinkedHashMap<>();
+        for (ElectricityMeter meter : meters) {
+            meterByNo.put(meter.getMeterNo(), meter);
+        }
+        List<Map<String, Object>> lastPeriodMeters = new ArrayList<>();
+        for (ElectricityReading reading : readings) {
+            if (!lastDate.equals(reading.getReadDate())) {
+                continue;
+            }
+            Integer no = noById.get(reading.getMeterId());
+            if (no == null) {
+                continue;
+            }
+            ElectricityMeter meter = meterByNo.get(no);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("meterNo", no);
+            row.put("meterName", meter == null ? "" : meter.getMeterName());
+            row.put("column", columnByMeter.get(no));
+            row.put("multiplier", meter == null ? 1 : meter.getMultiplier());
+            row.put("reading", reading.getReading());
+            row.put("prevReading", reading.getPrevReading());
+            row.put("usageQty", reading.getUsageQty());
+            row.put("readDate", reading.getReadDate().toString());
+            lastPeriodMeters.add(row);
+        }
+
         Map<String, Object> data = new LinkedHashMap<>();
+        data.put("lastPeriodMeters", lastPeriodMeters);
+        data.put("groupColumns", BILL_GROUPS);
         data.put("from", start.toString());
         data.put("to", end.toString());
         data.put("customRange", customRange);
