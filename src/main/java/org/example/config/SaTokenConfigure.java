@@ -62,7 +62,10 @@ public class SaTokenConfigure implements WebMvcConfigurer {
             "/api/pick-template/**",
             // 手机端领料单队列：手机发、电脑取。同样只在「登录」这一档，
             // 匿名不该看到厂里哪个部门在领什么料。
-            "/api/pick-order/**"};
+            "/api/pick-order/**",
+            // 待办（2026-11-16）：个人事项，只有手机用；登录即可读写，
+            // 匿名不该看到「谁要办什么事」。
+            "/api/todo/**"};
 
     @Autowired
     private org.example.audit.AuditInterceptor auditInterceptor;
