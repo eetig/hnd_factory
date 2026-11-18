@@ -118,7 +118,9 @@ public class PurchaseTrackingController {
     public Result<Long> quick(@RequestBody java.util.Map<String, String> body) {
         String text = body == null ? null : body.get("text");
         String requester = body == null ? null : body.get("requester");
-        return Result.success(purchaseTrackingService.quickCreate(text, requester));
+        // 单据类型由页面决定：采购页不带（默认 CGSQ），费用页带 ZCSG / FWCGSQ（2026-11-18）
+        String orderType = body == null ? null : body.get("orderType");
+        return Result.success(purchaseTrackingService.quickCreate(text, requester, orderType));
     }
 
     /**

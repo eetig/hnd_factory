@@ -571,7 +571,7 @@ public class PurchaseTrackingServiceImpl
 
     @Override
     @Transactional
-    public Long quickCreate(String text, String requester) {
+    public Long quickCreate(String text, String requester, String orderType) {
         String title = trimToNull(text);
         if (title == null) {
             throw new BusinessException("先写一句话再记，比如「车间要 20 个密封圈」");
@@ -589,9 +589,21 @@ public class PurchaseTrackingServiceImpl
         row.setMaterialCode("");
         row.setOaNo("");
         row.setDeliveryNote("");
+        // 单据类型：费用申请页记的一句要落 ZCSG / FWCGSQ，否则会被当成采购单，
+        // 在采购页里出现、费用页里消失（2026-11-18）
+        row.setOrderType(normalizeOrderType(orderType));
         row.setRequestDate(LocalDate.now());
         baseMapper.insert(row);
         return row.getId();
+    }
+
+    /** 只认三种单据类型，别的（含空）一律当采购申请 —— 老调用方不带这个字段也不会坏 */
+    private static String normalizeOrderType(String raw) {
+        String value = raw == null ? "" : raw.trim().toUpperCase();
+        if ("ZCSG".equals(value) || "FWCGSQ".equals(value) || "CGSQ".equals(value)) {
+            return value;
+        }
+        return "CGSQ";
     }
 
     @Override

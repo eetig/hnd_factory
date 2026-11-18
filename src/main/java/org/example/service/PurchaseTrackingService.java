@@ -56,7 +56,7 @@ public interface PurchaseTrackingService {
      * @param requester 谁要的（空 = 我自己）
      * @return 新记录主键
      */
-    Long quickCreate(String text, String requester);
+    Long quickCreate(String text, String requester, String orderType);
 
     /**
      * 记一次催货（留痕，不改需求本身）。
