@@ -133,6 +133,15 @@ public class PurchaseTrackingController {
     }
 
     /**
+     * 这张需求的催货记录（倒序，给手机端详情展示「催过几次、每次谁催的」）。
+     */
+    @SaCheckPermission("purchase:edit")
+    @GetMapping("/follow-ups")
+    public Result<java.util.List<org.example.entity.PurchaseFollowUp>> followUps(@RequestParam("id") Long id) {
+        return Result.success(purchaseTrackingService.listFollowUps(id));
+    }
+
+    /**
      * 确认验收（第二段）。
      *
      * <p>使用方 2026-11-18 定的两步：先有验收单号（只是关联单据），再点确认（真的核对完了）。

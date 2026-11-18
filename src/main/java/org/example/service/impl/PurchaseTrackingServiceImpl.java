@@ -606,6 +606,19 @@ public class PurchaseTrackingServiceImpl
         return countFollowUps(List.of(id)).getOrDefault(id, new FollowUpStat(0, null)).count();
     }
 
+    /**
+     * 这张需求的全部催货记录（倒序）。
+     *
+     * <p>只读、无分页：催货是「几次」的量级，一张需求一辈子也不会催上百次。
+     */
+    @Override
+    public List<PurchaseFollowUp> listFollowUps(Long id) {
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<PurchaseFollowUp> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        wrapper.eq("tracking_id", id).orderByDesc("pushed_at").orderByDesc("id");
+        return purchaseFollowUpMapper.selectList(wrapper);
+    }
+
     @Override
     @Transactional
     public void confirmAcceptance(Long id, String acceptanceNo) {

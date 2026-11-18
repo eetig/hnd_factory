@@ -66,6 +66,14 @@ public interface PurchaseTrackingService {
     int addFollowUp(Long id);
 
     /**
+     * 这张需求的全部催货记录（按时间倒序）。
+     *
+     * <p>手机端详情里要「看全部催痕」：哪天人催的、催了几次。
+     * 只给次数和最后时间答不出这个，所以单独出一条查询。
+     */
+    java.util.List<org.example.entity.PurchaseFollowUp> listFollowUps(Long id);
+
+    /**
      * 确认验收（第二段）：先把验收单号关联上，再点确认。
      *
      * <p>使用方 2026-11-18 明确分两步：「必须要有验收单号，这只是关联了验收单据；
