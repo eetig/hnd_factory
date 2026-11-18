@@ -121,4 +121,40 @@ public class PurchaseTrackingVO {
 
     /** 是否部分到货（需求数量与到货数量都填了，且到货 < 需求） */
     private Boolean partial;
+
+    // ===== 2026-11-18：验收确认 / 作废 / 催货 =====
+
+    /**
+     * 验收确认时间（NULL = 还没点确认）。
+     *
+     * <p>与 {@link #accepted} 的区别：{@code accepted} 只是「填了验收单号」（关联了单据），
+     * 这一列才是「我真的核对完、确认到货没问题」。使用方 2026-11-18 明确要求分两步：
+     * 「必须要有验收单号，这只是关联了验收单据；要确认已经完成验收，这个我来点确认」。
+     * 前端判断「待验收」应该看这个字段，不是看 {@code accepted}。
+     */
+    private LocalDateTime acceptConfirmedAt;
+
+    /** 验收确认人 */
+    private String acceptConfirmedBy;
+
+    /** 作废（1 = 记错/重复；列表不返回，仅库里留痕） */
+    private Integer voided;
+
+    /** 作废时间 */
+    private LocalDateTime voidedAt;
+
+    /** 催过几次（0 = 没催过） */
+    private Integer followUpCount;
+
+    /** 最近一次催货时间（NULL = 没催过） */
+    private LocalDateTime lastFollowUpAt;
+
+    /**
+     * 卡片的排序日期：有 OA 单号时取单号里那段日期（如 CG-CGSQ-20261109003 → 2026-11-09），
+     * 没有单号时取提出需求日期。
+     *
+     * <p>放在后端算，是因为「单号里哪一段是日期」的解析规则只该有一份（前端再抄一遍必然分叉）；
+     * 解析不出来时退回提出需求日期，前端只需按它倒序即可。
+     */
+    private LocalDate sortDate;
 }

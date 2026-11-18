@@ -158,4 +158,28 @@ public class PurchaseTracking {
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;
+
+    // ===== 2026-11-18 新增：验收确认 / 作废（都不参与整行覆写） =====
+
+    /*
+     * 这四列刻意**不加** `updateStrategy = ALWAYS`，与上面 14 列相反。
+     *
+     * 理由：整行覆写契约的前提是「表单里有的字段才代表使用者的意图」。而下面这四列
+     * 不在任何编辑表单里 —— 它们是两个独立动作（点「确认验收」、点「作废」）的产物。
+     * 若也标 ALWAYS，那么使用者改一次备注，提交的对象里这四列都是 null，
+     * 就会把「已经确认过的验收时间」「已经作废的标记」静默抹掉。
+     * 所以走 MyBatis-Plus 默认的「null 跳过」，只在专门的 service 方法里写它们。
+     */
+
+    /** 验收确认时间：使用者点「确认已验收」的那一刻（NULL = 还没确认） */
+    private LocalDateTime acceptConfirmedAt;
+
+    /** 验收确认人（登录账号的显示名） */
+    private String acceptConfirmedBy;
+
+    /** 作废标记：1 = 记错/重复，列表不再显示，但数据留着可追溯 */
+    private Integer voided;
+
+    /** 作废时间 */
+    private LocalDateTime voidedAt;
 }

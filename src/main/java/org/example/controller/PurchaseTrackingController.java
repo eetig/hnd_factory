@@ -104,6 +104,57 @@ public class PurchaseTrackingController {
         return Result.success(null);
     }
 
+    // ===== 2026-11-18：手机端「采购需求首页」=====
+
+    /**
+     * 一句话记一条口头需求（领导/车间主任口头交代，来不及填单时先兜住）。
+     *
+     * <p>体里只认两个字段：{@code text}（那一句话）、{@code requester}（谁要的，可不填 = 我自己）。
+     * 物料编码、数量、到货日期故意都留空 —— 使用方的原话是「口头交代，我私下还得时间去整理」，
+     * 所以这一步必须比打开完整表单快得多。
+     */
+    @SaCheckPermission("purchase:edit")
+    @PostMapping("/quick")
+    public Result<Long> quick(@RequestBody java.util.Map<String, String> body) {
+        String text = body == null ? null : body.get("text");
+        String requester = body == null ? null : body.get("requester");
+        return Result.success(purchaseTrackingService.quickCreate(text, requester));
+    }
+
+    /**
+     * 记一次催货（每次留痕，不只是改个「最后催货时间」）。
+     *
+     * @return 催过之后的累计次数，方便手机端直接刷新卡面「催 N 次」
+     */
+    @SaCheckPermission("purchase:edit")
+    @PostMapping("/follow-up")
+    public Result<Integer> followUp(@RequestParam("id") Long id) {
+        return Result.success(purchaseTrackingService.addFollowUp(id));
+    }
+
+    /**
+     * 确认验收（第二段）。
+     *
+     * <p>使用方 2026-11-18 定的两步：先有验收单号（只是关联单据），再点确认（真的核对完了）。
+     * 这里两段都能救：本次带了单号就一起落库；没带但库里已有也能确认；
+     * 两边都没有会报「先填验收单号，再点确认」。
+     */
+    @SaCheckPermission("purchase:edit")
+    @PostMapping("/accept")
+    public Result<Void> accept(@RequestParam("id") Long id,
+                               @RequestParam(value = "acceptanceNo", required = false) String acceptanceNo) {
+        purchaseTrackingService.confirmAcceptance(id, acceptanceNo);
+        return Result.success(null);
+    }
+
+    /** 作废：记错/重复的单子从列表消失，库里留痕可查（不硬删） */
+    @SaCheckPermission("purchase:edit")
+    @PostMapping("/void")
+    public Result<Void> voidRow(@RequestParam("id") Long id) {
+        purchaseTrackingService.voidRow(id);
+        return Result.success(null);
+    }
+
     /** 送货单图片的后缀白名单。file-service 只收 jpg/png，这里先拦一道给出人能看懂的话 */
     private static final Set<String> ALLOWED_IMAGE_EXT = Set.of("jpg", "jpeg", "png");
 

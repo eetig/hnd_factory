@@ -42,4 +42,43 @@ public interface PurchaseTrackingService {
      * 固定枚举做不到这点，所以下拉 = 基础项 ∪ 这张表里出现过的值。
      */
     java.util.List<String> categories();
+
+    // ===== 2026-11-18：手机端「采购需求首页」要的三件事 =====
+
+    /**
+     * 一句话建一张口头卡（领导口头交代、来不及填单的时候用）。
+     *
+     * <p>使用方原话：「临时记录车间主任或者领导交给我的采购需求（一般是口头交代，
+     * 我私下还得时间去整理）」。所以这里只收一句话 + 可选「谁要的」，
+     * 编码/数量/到货日期全部留空，等整理时再补。
+     *
+     * @param text      一句话（落到 materialName，超长截断）
+     * @param requester 谁要的（空 = 我自己）
+     * @return 新记录主键
+     */
+    Long quickCreate(String text, String requester);
+
+    /**
+     * 记一次催货（留痕，不改需求本身）。
+     *
+     * @return 这次之后的总催货次数
+     */
+    int addFollowUp(Long id);
+
+    /**
+     * 确认验收（第二段）：先把验收单号关联上，再点确认。
+     *
+     * <p>使用方 2026-11-18 明确分两步：「必须要有验收单号，这只是关联了验收单据；
+     * 要确认已经完成验收，这个我来点确认」。所以这里既接受本次补填的单号，
+     * 也接受库里已有的单号；两者都没有就报错，不让空着确认。
+     *
+     * @param id           采购需求主键
+     * @param acceptanceNo 验收单号（可空 = 用库里已填的）
+     */
+    void confirmAcceptance(Long id, String acceptanceNo);
+
+    /**
+     * 作废（记错/重复）：列表不再显示，库里留痕可查。
+     */
+    void voidRow(Long id);
 }

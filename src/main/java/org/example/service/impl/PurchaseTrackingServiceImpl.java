@@ -10,10 +10,12 @@ import org.example.dto.PurchaseTrackingSummaryQueryDTO;
 import org.example.dto.PurchaseTrackingSummaryVO;
 import org.example.dto.PurchaseTrackingVO;
 import org.example.entity.MaterialStock;
+import org.example.entity.PurchaseFollowUp;
 import org.example.entity.PurchaseTracking;
 import org.example.exception.BusinessException;
 import org.example.feign.ImgFeignClient;
 import org.example.mapper.MaterialStockMapper;
+import org.example.mapper.PurchaseFollowUpMapper;
 import org.example.mapper.PurchaseTrackingMapper;
 import org.example.service.PurchaseTrackingService;
 import org.example.util.PurchaseTrackingStatus;
@@ -26,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -82,12 +85,14 @@ public class PurchaseTrackingServiceImpl
         Set<PurchaseTrackingStatus> statusFilters = parseStatuses(query.getStatuses(), query.getStatus());
         LambdaQueryWrapper<PurchaseTracking> wrapper = filterOf(query.getKeyword(),
                 query.parsedStartDate(), query.parsedEndDate(), query.getCategory(),
-                query.getOrderType(), query.getOrderTypes(), query.getAccepted());
+                query.getOrderType(), query.getOrderTypes(), query.getAccepted())
+                // 作废的（记错/重复）不进任何列表：voided 是 NOT NULL DEFAULT 0，老数据也是 0
+                .ne(PurchaseTracking::getVoided, 1);
 
         // 没按状态筛：走正常的后端分页（快路径，绝大部分请求都在这条路上）
         if (statusFilters.isEmpty()) {
             Page<PurchaseTracking> page = new Page<>(query.resolvedPageNum(), query.resolvedPageSize());
-            return baseMapper.selectPage(page, wrapper
+            IPage<PurchaseTrackingVO> result = baseMapper.selectPage(page, wrapper
                             // ⚠️ 排序键必须以**唯一列** id 收尾。同一天的采购需求可能有好几条，
                             // 只按日期排时 MySQL 不保证两次查询的相对顺序一致 ⇒ 翻页会漏行、也会重复行。
                             // 这个坑入库汇总改后端分页时踩过一次（见 ProductionInboundServiceImpl）。
@@ -96,6 +101,8 @@ public class PurchaseTrackingServiceImpl
                             .orderByDesc(PurchaseTracking::getRequestDate)
                             .orderByDesc(PurchaseTracking::getId))
                     .convert(this::toVO);
+            fillFollowUps(result.getRecords());
+            return result;
         }
 
         // 按派生状态筛：库里没有状态列，SQL 表达不了 —— 硬写 CASE WHEN 等于把
@@ -122,7 +129,29 @@ public class PurchaseTrackingServiceImpl
         int to = (int) Math.min(from + pageSize, matched.size());
         Page<PurchaseTrackingVO> result = new Page<>(pageNum, pageSize, matched.size());
         result.setRecords(matched.subList(from, to).stream().map(this::toVO).toList());
+        fillFollowUps(result.getRecords());
         return result;
+    }
+
+    /**
+     * 给一页记录回填催货统计（一次 group by，不是逐行查）。
+     */
+    private void fillFollowUps(List<PurchaseTrackingVO> records) {
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+        List<Long> ids = new ArrayList<>(records.size());
+        for (PurchaseTrackingVO vo : records) {
+            if (vo.getId() != null) {
+                ids.add(vo.getId());
+            }
+        }
+        java.util.Map<Long, FollowUpStat> stats = countFollowUps(ids);
+        for (PurchaseTrackingVO vo : records) {
+            FollowUpStat stat = stats.get(vo.getId());
+            vo.setFollowUpCount(stat == null ? 0 : stat.count());
+            vo.setLastFollowUpAt(stat == null ? null : stat.lastAt());
+        }
     }
 
     /**
@@ -530,6 +559,150 @@ public class PurchaseTrackingServiceImpl
         }
     }
 
+    // ===== 2026-11-18：手机端「采购需求首页」要的三件事 =====
+
+    /** 催货留痕 */
+    @Autowired
+    private org.example.mapper.PurchaseFollowUpMapper purchaseFollowUpMapper;
+
+    /** 只为把登录账号翻成「谁要的」的人名 */
+    @Autowired
+    private org.example.mapper.SysUserMapper sysUserMapper;
+
+    @Override
+    @Transactional
+    public Long quickCreate(String text, String requester) {
+        String title = trimToNull(text);
+        if (title == null) {
+            throw new BusinessException("先写一句话再记，比如「车间要 20 个密封圈」");
+        }
+        // material_name 是 varchar(128)，截断而不是报错：口头交代常常一句话很长，
+        // 为了长度把整条记录丢掉是最差的选择
+        if (title.length() > 128) {
+            title = title.substring(0, 128);
+        }
+        String who = trimToNull(requester);
+        PurchaseTracking row = new PurchaseTracking();
+        // 这几列库里是 NOT NULL DEFAULT ''，显式给空串更稳（不依赖默认值）
+        row.setRequester(blankIfNull(who == null ? actorName() : who));
+        row.setMaterialName(title);
+        row.setMaterialCode("");
+        row.setOaNo("");
+        row.setDeliveryNote("");
+        row.setRequestDate(LocalDate.now());
+        baseMapper.insert(row);
+        return row.getId();
+    }
+
+    @Override
+    @Transactional
+    public int addFollowUp(Long id) {
+        requireTracking(id);
+        PurchaseFollowUp record = new PurchaseFollowUp();
+        record.setTrackingId(id);
+        record.setPushedAt(LocalDateTime.now());
+        record.setPushedBy(actorName());
+        purchaseFollowUpMapper.insert(record);
+        return countFollowUps(List.of(id)).getOrDefault(id, new FollowUpStat(0, null)).count();
+    }
+
+    @Override
+    @Transactional
+    public void confirmAcceptance(Long id, String acceptanceNo) {
+        PurchaseTracking row = requireTracking(id);
+        String no = trimToNull(acceptanceNo);
+        if (no == null) {
+            no = trimToNull(row.getAcceptanceNo());
+        }
+        if (no == null) {
+            // 使用方要求：验收必须挂在单据上，不许空着点确认
+            throw new BusinessException("先填验收单号，再点确认");
+        }
+        // ⚠️ 不能用 updateById(row)：这个实体 14 个可编辑列都标了
+        // updateStrategy = ALWAYS，只 set 两个字段会把其余列写成 null。
+        // 所以这里走 UpdateWrapper 只改要改的列。
+        baseMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<PurchaseTracking>()
+                .eq(PurchaseTracking::getId, id)
+                .set(PurchaseTracking::getAcceptanceNo, no)
+                .set(PurchaseTracking::getAcceptConfirmedAt, LocalDateTime.now())
+                .set(PurchaseTracking::getAcceptConfirmedBy, actorName()));
+    }
+
+    @Override
+    @Transactional
+    public void voidRow(Long id) {
+        requireTracking(id);
+        baseMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<PurchaseTracking>()
+                .eq(PurchaseTracking::getId, id)
+                .set(PurchaseTracking::getVoided, 1)
+                .set(PurchaseTracking::getVoidedAt, LocalDateTime.now()));
+    }
+
+    private PurchaseTracking requireTracking(Long id) {
+        PurchaseTracking row = id == null ? null : baseMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException("这条采购需求不在了，刷新看看");
+        }
+        return row;
+    }
+
+    /** 一条记录的催货统计 */
+    record FollowUpStat(int count, LocalDateTime lastAt) {
+    }
+
+    /**
+     * 批量取催货统计：一次 group by 拿全页，避免在 toVO 里逐行查（那是 N+1）。
+     */
+    private java.util.Map<Long, FollowUpStat> countFollowUps(List<Long> ids) {
+        java.util.Map<Long, FollowUpStat> result = new java.util.HashMap<>();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<PurchaseFollowUp> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        wrapper.select("tracking_id", "count(*) as cnt", "max(pushed_at) as last_at")
+                .in("tracking_id", ids)
+                .groupBy("tracking_id");
+        for (java.util.Map<String, Object> row : purchaseFollowUpMapper.selectMaps(wrapper)) {
+            Object idValue = row.get("tracking_id");
+            if (idValue == null) {
+                continue;
+            }
+            long trackingId = ((Number) idValue).longValue();
+            int count = row.get("cnt") == null ? 0 : ((Number) row.get("cnt")).intValue();
+            LocalDateTime last = null;
+            Object lastValue = row.get("last_at");
+            if (lastValue instanceof LocalDateTime dateTime) {
+                last = dateTime;
+            } else if (lastValue instanceof java.sql.Timestamp timestamp) {
+                last = timestamp.toLocalDateTime();
+            }
+            result.put(trackingId, new FollowUpStat(count, last));
+        }
+        return result;
+    }
+
+    /** 当前登录人的显示名（真实姓名优先，没有就用账号） */
+    private String actorName() {
+        try {
+            long userId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+            org.example.entity.SysUser user = sysUserMapper.selectById(userId);
+            if (user != null) {
+                String realName = trimToNull(user.getRealName());
+                if (realName != null) {
+                    return realName;
+                }
+                String username = trimToNull(user.getUsername());
+                if (username != null) {
+                    return username;
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // 定时任务/内部调用没有登录态，落到下面的兜底
+        }
+        return "系统";
+    }
+
     // ===== 小工具 =====
 
     private PurchaseTrackingVO toVO(PurchaseTracking row) {
@@ -561,6 +734,13 @@ public class PurchaseTrackingServiceImpl
         vo.setCreateTime(row.getCreateTime());
         vo.setUpdateTime(row.getUpdateTime());
 
+        // 2026-11-18：验收确认 / 作废 / 卡片排序日期
+        vo.setAcceptConfirmedAt(row.getAcceptConfirmedAt());
+        vo.setAcceptConfirmedBy(row.getAcceptConfirmedBy());
+        vo.setVoided(row.getVoided() == null ? 0 : row.getVoided());
+        vo.setVoidedAt(row.getVoidedAt());
+        vo.setSortDate(sortDateOf(row));
+
         // 派生状态（变更-096）：口径只在 PurchaseTrackingStatus 一处，
         // 汇总接口也调它，两处永远是同一天、同一套规则。
         LocalDate today = LocalDate.now();
@@ -571,6 +751,36 @@ public class PurchaseTrackingServiceImpl
         vo.setDaysToDue(PurchaseTrackingStatus.daysToDue(row, today));
         vo.setPartial(PurchaseTrackingStatus.isPartial(row));
         return vo;
+    }
+
+    /**
+     * 卡片排序日期：有 OA 单号就取单号里那段日期，否则用提出需求日期。
+     *
+     * <p>使用方 2026-11-18 的查看习惯是「按单号后面的日期由近到远」——
+     * 因为补录的单子提出日期可能是好几天前，而单号里的日期才是它真正进流程的日子。
+     * 解析规则放在后端，只此一份；解不出来（手填了不规则单号）就退回提出日期。
+     */
+    static LocalDate sortDateOf(PurchaseTracking row) {
+        LocalDate fallback = row.getRequestDate();
+        String oaNo = trimToNull(row.getOaNo());
+        if (oaNo == null) {
+            return fallback;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(\\d{8})").matcher(oaNo);
+        while (matcher.find()) {
+            String digits = matcher.group(1);
+            try {
+                int year = Integer.parseInt(digits.substring(0, 4));
+                int month = Integer.parseInt(digits.substring(4, 6));
+                int day = Integer.parseInt(digits.substring(6, 8));
+                if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && year >= 2000) {
+                    return LocalDate.of(year, month, day);
+                }
+            } catch (RuntimeException ignored) {
+                // 这一段不是日期，继续找下一段
+            }
+        }
+        return fallback;
     }
 
     /** 去空白；空/空白串 → null */
