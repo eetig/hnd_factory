@@ -3972,3 +3972,40 @@ CREATE TABLE IF NOT EXISTS `pick_template` (
   KEY `idx_pick_template_dept` (`dept`),
   KEY `idx_pick_template_doc_type` (`doc_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='领料解析：SAP 导入模板（列映射 + 原文件）';
+
+-- 第 26 步：巡检清单与巡检记录（变更-254 建立，变更-257 改成「整篇正文」模型）
+-- 手机端现场巡检：清单就是一篇写好的检查内容（车间 / 泵房各一篇），
+-- 现场对着看一遍、确认没漏，然后记一笔「谁、什么时候、照着哪篇、留了什么」。
+-- 正文放 text（不是 JSON 数组）：内容本来就是一段话，换行即分段，不做富文本；
+-- 记录不存逐项结果、也不存异常数 —— 那段文字就是标准，异常写在备注里由人判断。
+-- inspect_record.client_uuid 唯一：泵房没信号时先存手机，联网重传靠它幂等。
+CREATE TABLE IF NOT EXISTS `inspect_template` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `name` varchar(80) NOT NULL COMMENT '清单名（如 1#车间日常巡检）',
+  `kind` varchar(20) DEFAULT NULL COMMENT '车间 / 泵房（仅用于手机端分组）',
+  `body` mediumtext COMMENT '正文：一整篇检查内容，换行即分段',
+  `enabled` tinyint NOT NULL DEFAULT 1 COMMENT '1 启用 0 停用',
+  `created_by` bigint DEFAULT NULL COMMENT '创建人 user id',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_inspect_template_kind` (`kind`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='巡检：清单（一篇正文）';
+
+CREATE TABLE IF NOT EXISTS `inspect_record` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `client_uuid` varchar(64) DEFAULT NULL COMMENT '手机端生成的唯一号，离线重传靠它幂等',
+  `template_id` bigint DEFAULT NULL COMMENT '清单 id（清单删了也不影响本行）',
+  `template_name` varchar(80) DEFAULT NULL COMMENT '提交时的清单名快照',
+  `kind` varchar(20) DEFAULT NULL COMMENT '车间 / 泵房快照',
+  `operator_id` bigint DEFAULT NULL,
+  `operator_name` varchar(40) DEFAULT NULL COMMENT '巡检人姓名快照',
+  `started_at` datetime DEFAULT NULL COMMENT '开始时间',
+  `finished_at` datetime NOT NULL COMMENT '完成时间（列表按它倒序）',
+  `note` varchar(500) DEFAULT NULL COMMENT '现场备注（选填）',
+  `images` text COMMENT '现场照片 JSON：["/files/a.jpg", ...]，最多 9 张',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_inspect_record_uuid` (`client_uuid`),
+  KEY `idx_inspect_record_finished` (`finished_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='巡检：每次巡检一条记录';
