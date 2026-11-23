@@ -24,6 +24,15 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 本机上，外部网页拿不到；不加的话本地一切写请求（POST/PUT/DELETE）都会被预检拦成
  * 403，只能靠把请求体抄到线上重放来验证，慢且容易抄错。
  * 生产域名同源、本来就不走 CORS，因此这几条对线上没有任何影响。
+ *
+ * <p>2026-11-23 追加 {@code https://hbhnd.cloud}（变更-269 后续）。起因：手机端 App 的
+ * H5 版挂在 {@code https://hbhnd.cloud/pwd/} 下，登录 POST 带 {@code Origin: https://hbhnd.cloud}，
+ * 却被判成「Invalid CORS request」403。根因是 nginx 到后端是明文 http，且没有转发
+ * {@code X-Forwarded-Proto}，Spring 认为自己的地址是 {@code http://hbhnd.cloud}，
+ * 于是把 https 的同源请求当成跨域，再一比对白名单里没有 https 就拒了。
+ * 补上 https 两个来源即可；这是明确的自家域名，不是放开 {@code *}。
+ * 更彻底的修法是配 {@code server.forward-headers-strategy=framework}，但会影响
+ * 全站 URL 生成与跳转，不在这次范围内。
  */
 @Configuration
 public class WebCorsConfig implements WebMvcConfigurer {
@@ -32,6 +41,8 @@ public class WebCorsConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
                 .allowedOrigins(
+                        "https://hbhnd.cloud",
+                        "http://hbhnd.cloud",
                         "http://tauri.localhost",
                         "https://tauri.localhost",
                         "tauri://localhost",
