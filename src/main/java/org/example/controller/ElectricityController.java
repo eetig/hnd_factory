@@ -153,13 +153,21 @@ public class ElectricityController {
      *
      * <p>body: { "reading": 608 }
      *
-     * <p>为什么读数谁都能改：现场抄错的是抄表的人自己发现的，让他去找管理员才能改，
-     * 只会让错数据多留几天。改完会连带重算同表下一条的用量（见 Service 注释），
-     * 且这次修改会进审计日志。
+     * <p>改完会连带重算同表下一条的用量（见 Service 注释），且这次修改会进审计日志。
+     *
+     * <h2>为什么 2026-11-23 从「登录即可」收紧成「只有 admin」</h2>
+     * 使用方原话：「只有我能改，也就是管理员」。原来的口径是「谁抄错的谁自己改，
+     * 别让错数据多留几天」，但历史数据是月底算电量、算预提的依据 —— 谁都能改就等于
+     * 谁都能把已经结算过的口径改掉。现在改成：<b>录</b>（batch / import）仍然 admin
+     * 或抄表员，<b>改历史</b>只有 admin。
+     *
+     * <p>注意这里<b>不用</b> {@code requireAdmin()}：那个方法走
+     * {@link ElectricityClerkController#canWriteReadings()}，admin 与抄表员都放行；
+     * 改历史比录当天更敏感，所以单独一个严格判据。
      */
     @PutMapping("/readings/{id}")
     public Result<Map<String, Object>> updateReading(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        requireLogin();
+        requireReadingAdmin();
         BigDecimal reading = electricityService.toDecimal(body == null ? null : body.get("reading"));
         return Result.success(electricityService.updateReading(id, reading));
     }
@@ -183,6 +191,20 @@ public class ElectricityController {
         }
         if (!ElectricityClerkController.canWriteReadings()) {
             throw new BusinessException("只有管理员能改电表台账");
+        }
+    }
+
+    /**
+     * 比 {@link #requireAdmin()} 更严：只认 admin 角色，抄表员不放行。
+     *
+     * <p>只给「改已入库的历史读数」用（updateReading）。
+     */
+    private static void requireReadingAdmin() {
+        if (!StpUtil.isLogin()) {
+            throw new BusinessException("请先登录");
+        }
+        if (!StpUtil.hasRole("admin")) {
+            throw new BusinessException("只有管理员能改历史读数");
         }
     }
 

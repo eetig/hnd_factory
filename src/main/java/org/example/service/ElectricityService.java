@@ -243,6 +243,9 @@ public class ElectricityService {
             }
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", reading.getId());
+            // 2026-11-23：前端要能「查这块表的下一条」才放进来（改历史读数时提示连带影响），
+            // 之前只回表号，同一个表号在不同车间可能重名，靠 meterNo 反查不安全。
+            row.put("meterId", reading.getMeterId());
             row.put("readDate", reading.getReadDate());
             row.put("meterNo", meter.getMeterNo());
             row.put("meterName", meter.getMeterName());
@@ -300,14 +303,29 @@ public class ElectricityService {
         row.setReading(reading);
         fillPrevAndUsage(row, meter);
         readingMapper.updateById(row);
-        recomputeNext(row, meter);
+        ElectricityReading next = recomputeNext(row, meter);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", row.getId());
+        out.put("meterId", row.getMeterId());
+        out.put("readDate", row.getReadDate() == null ? null : row.getReadDate().toString());
         out.put("before", before);
         out.put("reading", row.getReading());
         out.put("prevReading", row.getPrevReading());
         out.put("usageQty", row.getUsageQty());
+        // 2026-11-23：界面要当场说清「还动了哪一期」。next 为 null 表示这块表没有下一条，
+        // 那就只影响本期。字段名与 history() 对齐，前端不用两套命名。
+        if (next == null) {
+            out.put("next", null);
+        } else {
+            Map<String, Object> nextOut = new LinkedHashMap<>();
+            nextOut.put("id", next.getId());
+            nextOut.put("readDate", next.getReadDate() == null ? null : next.getReadDate().toString());
+            nextOut.put("reading", next.getReading());
+            nextOut.put("prevReading", next.getPrevReading());
+            nextOut.put("usageQty", next.getUsageQty());
+            out.put("next", nextOut);
+        }
         return out;
     }
 
@@ -371,15 +389,16 @@ public class ElectricityService {
         row.setUsageQty(usageOf(row.getReading(), prevValue, meter));
     }
 
-    /** 改完这一行，把下一条的「上次读数」和用量接上 */
-    private void recomputeNext(ElectricityReading row, ElectricityMeter meter) {
+    /** 改完这一行，把下一条的「上次读数」和用量接上；返回被连带改的那条（没有下一条时 null） */
+    private ElectricityReading recomputeNext(ElectricityReading row, ElectricityMeter meter) {
         ElectricityReading next = row.getReadDate() == null ? null : nextReading(row.getMeterId(), row.getReadDate());
         if (next == null) {
-            return;
+            return null;
         }
         next.setPrevReading(row.getReading());
         next.setUsageQty(usageOf(next.getReading(), row.getReading(), meter));
         readingMapper.updateById(next);
+        return next;
     }
 
     /** 用量 =（本次 − 上次）× 倍率；没有上次读数时按 0 记（口径与批量保存一致） */
